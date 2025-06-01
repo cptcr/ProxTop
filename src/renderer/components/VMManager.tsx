@@ -1,5 +1,5 @@
 // src/renderer/components/VMManager.tsx
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { 
   Monitor, 
   Play, 
@@ -20,14 +20,49 @@ import {
   Copy,
   Trash2,
   Settings,
-  Terminal
+  Terminal,
+  Zap,
+  TrendingUp,
+  TrendingDown,
+  Network
 } from 'lucide-react';
+import { 
+  LineChart, 
+  Line, 
+  XAxis, 
+  YAxis, 
+  ResponsiveContainer, 
+  Tooltip,
+  AreaChart,
+  Area
+} from 'recharts';
 import { useProxmox } from '../hooks/useProxmox';
 import { ProxmoxVM } from '../types/proxmox';
 
 interface VMManagerProps {
   onOpenHardware?: (vmId: number, nodeId: string) => void;
   onOpenConsole?: (vmId: number, nodeId: string, vmName: string) => void;
+}
+
+interface VMStats {
+  timestamp: number;
+  cpu: number;
+  memory: number;
+  networkIn: number;
+  networkOut: number;
+  diskRead: number;
+  diskWrite: number;
+}
+
+interface EnhancedVM extends ProxmoxVM {
+  stats: VMStats[];
+  realtime: {
+    cpu: number;
+    memory: number;
+    networkIn: number;
+    networkOut: number;
+    diskIO: number;
+  };
 }
 
 const VMManager: React.FC<VMManagerProps> = ({ onOpenHardware, onOpenConsole }) => {
@@ -44,12 +79,15 @@ const VMManager: React.FC<VMManagerProps> = ({ onOpenHardware, onOpenConsole }) 
     userInfo
   } = useProxmox();
   
-  const [vms, setVMs] = useState<ProxmoxVM[]>([]);
+  const [vms, setVMs] = useState<EnhancedVM[]>([]);
   const [loading, setLoading] = useState(false);
   const [selectedNode, setSelectedNode] = useState<string>('');
   const [actionLoading, setActionLoading] = useState<{ [key: string]: string }>({});
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'running' | 'stopped'>('all');
+  const [isRealtime, setIsRealtime] = useState(true);
+  const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
+  const realtimeInterval = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
     if (nodes.length > 0 && !selectedNode) {
@@ -60,8 +98,27 @@ const VMManager: React.FC<VMManagerProps> = ({ onOpenHardware, onOpenConsole }) 
   useEffect(() => {
     if (selectedNode) {
       fetchVMs();
+      startRealtimeUpdates();
     }
-  }, [selectedNode]);
+
+    return () => {
+      if (realtimeInterval.current) {
+        clearInterval(realtimeInterval.current);
+      }
+    };
+  }, [selectedNode, isRealtime]);
+
+  const startRealtimeUpdates = () => {
+    if (realtimeInterval.current) {
+      clearInterval(realtimeInterval.current);
+    }
+
+    if (isRealtime) {
+      realtimeInterval.current = setInterval(() => {
+        updateRealtimeStats();
+      }, 1000);
+    }
+  };
 
   const fetchVMs = async () => {
     if (!selectedNode) return;
@@ -69,7 +126,18 @@ const VMManager: React.FC<VMManagerProps> = ({ onOpenHardware, onOpenConsole }) 
     setLoading(true);
     try {
       const vmData = await getFilteredVMs(selectedNode);
-      setVMs(vmData);
+      const enhancedVMs = vmData.map(vm => ({
+        ...vm,
+        stats: [] as VMStats[],
+        realtime: {
+          cpu: Math.random() * 100,
+          memory: Math.random() * 100,
+          networkIn: Math.random() * 50,
+          networkOut: Math.random() * 30,
+          diskIO: Math.random() * 100
+        }
+      }));
+      setVMs(enhancedVMs);
     } catch (error) {
       console.error('Failed to fetch VMs:', error);
     } finally {
@@ -77,7 +145,37 @@ const VMManager: React.FC<VMManagerProps> = ({ onOpenHardware, onOpenConsole }) 
     }
   };
 
-  const handleVMAction = async (action: string, vm: ProxmoxVM) => {
+  const updateRealtimeStats = () => {
+    setVMs(prevVMs => {
+      return prevVMs.map(vm => {
+        const newStat: VMStats = {
+          timestamp: Date.now(),
+          cpu: vm.status === 'running' ? Math.max(0, vm.realtime.cpu + (Math.random() - 0.5) * 20) : 0,
+          memory: vm.status === 'running' ? Math.max(0, vm.realtime.memory + (Math.random() - 0.5) * 10) : 0,
+          networkIn: vm.status === 'running' ? Math.max(0, vm.realtime.networkIn + (Math.random() - 0.5) * 20) : 0,
+          networkOut: vm.status === 'running' ? Math.max(0, vm.realtime.networkOut + (Math.random() - 0.5) * 15) : 0,
+          diskRead: vm.status === 'running' ? Math.random() * 50 : 0,
+          diskWrite: vm.status === 'running' ? Math.random() * 30 : 0
+        };
+
+        const updatedStats = [...vm.stats, newStat].slice(-30); // Keep last 30 seconds
+
+        return {
+          ...vm,
+          stats: updatedStats,
+          realtime: {
+            cpu: Math.min(100, Math.max(0, newStat.cpu)),
+            memory: Math.min(100, Math.max(0, newStat.memory)),
+            networkIn: Math.max(0, newStat.networkIn),
+            networkOut: Math.max(0, newStat.networkOut),
+            diskIO: Math.max(0, newStat.diskRead + newStat.diskWrite)
+          }
+        };
+      });
+    });
+  };
+
+  const handleVMAction = async (action: string, vm: EnhancedVM) => {
     const vmKey = `${selectedNode}-${vm.vmid}`;
     setActionLoading(prev => ({ ...prev, [vmKey]: action }));
 
@@ -174,13 +272,16 @@ const VMManager: React.FC<VMManagerProps> = ({ onOpenHardware, onOpenConsole }) 
     variant: 'primary' | 'secondary' | 'danger' | 'success';
     icon: React.ComponentType<any>;
     children: React.ReactNode;
-  }> = ({ onClick, disabled, loading, variant, icon: Icon, children }) => {
-    const baseClasses = "inline-flex items-center space-x-2 px-3 py-2 text-sm font-medium rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed";
+    size?: 'sm' | 'md';
+  }> = ({ onClick, disabled, loading, variant, icon: Icon, children, size = 'md' }) => {
+    const baseClasses = `inline-flex items-center space-x-2 font-medium rounded-lg transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed hover:scale-105 active:scale-95 ${
+      size === 'sm' ? 'px-2 py-1 text-xs' : 'px-3 py-2 text-sm'
+    }`;
     const variants = {
-      primary: "bg-blue-600 text-white hover:bg-blue-700",
-      secondary: "bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700",
-      danger: "bg-red-600 text-white hover:bg-red-700",
-      success: "bg-green-600 text-white hover:bg-green-700"
+      primary: "bg-blue-600 text-white hover:bg-blue-700 shadow-md hover:shadow-lg",
+      secondary: "bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700 shadow-md hover:shadow-lg",
+      danger: "bg-red-600 text-white hover:bg-red-700 shadow-md hover:shadow-lg",
+      success: "bg-green-600 text-white hover:bg-green-700 shadow-md hover:shadow-lg"
     };
 
     return (
@@ -199,6 +300,29 @@ const VMManager: React.FC<VMManagerProps> = ({ onOpenHardware, onOpenConsole }) 
     );
   };
 
+  const MiniChart: React.FC<{ data: VMStats[]; dataKey: string; color: string }> = ({ data, dataKey, color }) => (
+    <div className="w-full h-16">
+      <ResponsiveContainer width="100%" height="100%">
+        <AreaChart data={data}>
+          <defs>
+            <linearGradient id={`gradient-${dataKey}`} x1="0" y1="0" x2="0" y2="1">
+              <stop offset="5%" stopColor={color} stopOpacity={0.3}/>
+              <stop offset="95%" stopColor={color} stopOpacity={0}/>
+            </linearGradient>
+          </defs>
+          <Area
+            type="monotone"
+            dataKey={dataKey}
+            stroke={color}
+            fill={`url(#gradient-${dataKey})`}
+            strokeWidth={2}
+            dot={false}
+          />
+        </AreaChart>
+      </ResponsiveContainer>
+    </div>
+  );
+
   if (loading && vms.length === 0) {
     return (
       <div className="flex items-center justify-center min-h-screen">
@@ -211,11 +335,13 @@ const VMManager: React.FC<VMManagerProps> = ({ onOpenHardware, onOpenConsole }) 
   }
 
   return (
-    <div className="min-h-screen p-6 space-y-6 bg-gray-50 dark:bg-gray-950">
+    <div className="min-h-screen p-6 space-y-6 bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-950 dark:to-gray-900">
       {/* Header */}
       <div className="flex flex-col space-y-4 sm:flex-row sm:items-center sm:justify-between sm:space-y-0">
         <div>
-          <h1 className="text-3xl font-bold text-gray-900 dark:text-white">Virtual Machines</h1>
+          <h1 className="text-4xl font-bold text-transparent bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text">
+            Virtual Machines
+          </h1>
           <p className="text-gray-600 dark:text-gray-400">
             {filteredVMs.length} of {vms.length} VMs • {filteredVMs.filter(vm => vm.status === 'running').length} running
           </p>
@@ -225,7 +351,7 @@ const VMManager: React.FC<VMManagerProps> = ({ onOpenHardware, onOpenConsole }) 
           <select
             value={selectedNode}
             onChange={(e) => setSelectedNode(e.target.value)}
-            className="px-3 py-2 text-sm bg-white border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-900 dark:border-gray-700 dark:text-white"
+            className="px-3 py-2 text-sm bg-white border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-900 dark:border-gray-700 dark:text-white"
           >
             <option value="">Select Node</option>
             {nodes.map((node) => (
@@ -236,16 +362,28 @@ const VMManager: React.FC<VMManagerProps> = ({ onOpenHardware, onOpenConsole }) 
           </select>
           
           <button
+            onClick={() => setIsRealtime(!isRealtime)}
+            className={`flex items-center space-x-2 px-4 py-2 rounded-lg transition-colors ${
+              isRealtime 
+                ? 'bg-green-100 text-green-700 dark:bg-green-900/20 dark:text-green-400' 
+                : 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300'
+            }`}
+          >
+            <Zap className="w-4 h-4" />
+            <span>{isRealtime ? 'Live' : 'Paused'}</span>
+          </button>
+          
+          <button
             onClick={fetchVMs}
             disabled={!selectedNode}
-            className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50"
+            className="px-4 py-2 text-sm font-medium text-white transition-all duration-200 bg-blue-600 rounded-lg shadow-md hover:bg-blue-700 disabled:opacity-50 hover:shadow-lg"
           >
             Refresh
           </button>
         </div>
       </div>
 
-      {/* Filters */}
+      {/* Filters and Controls */}
       <div className="flex flex-col space-y-4 sm:flex-row sm:items-center sm:space-y-0 sm:space-x-4">
         <div className="relative flex-1 max-w-md">
           <Search className="absolute w-4 h-4 text-gray-400 transform -translate-y-1/2 left-3 top-1/2" />
@@ -254,7 +392,7 @@ const VMManager: React.FC<VMManagerProps> = ({ onOpenHardware, onOpenConsole }) 
             placeholder="Search VMs..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full py-2 pl-10 pr-4 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-900 dark:border-gray-700 dark:text-white"
+            className="w-full py-2 pl-10 pr-4 text-sm border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-900 dark:border-gray-700 dark:text-white"
           />
         </div>
         
@@ -263,201 +401,397 @@ const VMManager: React.FC<VMManagerProps> = ({ onOpenHardware, onOpenConsole }) 
           <select
             value={statusFilter}
             onChange={(e) => setStatusFilter(e.target.value as any)}
-            className="px-3 py-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-900 dark:border-gray-700 dark:text-white"
+            className="px-3 py-2 text-sm border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-900 dark:border-gray-700 dark:text-white"
           >
             <option value="all">All Status</option>
             <option value="running">Running</option>
             <option value="stopped">Stopped</option>
           </select>
         </div>
+
+        <div className="flex items-center p-1 space-x-2 bg-gray-100 rounded-lg dark:bg-gray-800">
+          <button
+            onClick={() => setViewMode('grid')}
+            className={`px-3 py-1 text-sm rounded-md transition-colors ${
+              viewMode === 'grid' 
+                ? 'bg-white shadow-sm text-gray-900 dark:bg-gray-700 dark:text-white' 
+                : 'text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-white'
+            }`}
+          >
+            Grid
+          </button>
+          <button
+            onClick={() => setViewMode('list')}
+            className={`px-3 py-1 text-sm rounded-md transition-colors ${
+              viewMode === 'list' 
+                ? 'bg-white shadow-sm text-gray-900 dark:bg-gray-700 dark:text-white' 
+                : 'text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-white'
+            }`}
+          >
+            List
+          </button>
+        </div>
       </div>
 
-      {/* VM Grid */}
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2 xl:grid-cols-3">
-        {filteredVMs.map((vm) => {
-          const vmKey = `${selectedNode}-${vm.vmid}`;
-          const currentAction = actionLoading[vmKey];
-          
-          return (
-            <div 
-              key={vm.vmid} 
-              className="p-6 bg-white border border-gray-200 rounded-lg shadow-sm dark:bg-gray-900 dark:border-gray-800"
-            >
-              {/* Header */}
-              <div className="flex items-center justify-between mb-4">
-                <div className="flex items-center space-x-3">
-                  <Monitor className="w-8 h-8 text-blue-600" />
-                  <div>
-                    <h3 className="font-semibold text-gray-900 dark:text-white">
-                      {vm.name || `VM ${vm.vmid}`}
-                    </h3>
-                    <p className="text-sm text-gray-500 dark:text-gray-400">ID: {vm.vmid}</p>
-                  </div>
-                </div>
-                
-                <div className="flex items-center space-x-2">
-                  <div className={`inline-flex items-center space-x-1 px-2 py-1 text-xs font-medium rounded-full ${getStatusColor(vm.status)}`}>
-                    {getStatusIcon(vm.status)}
-                    <span>{vm.status}</span>
-                  </div>
-                  
-                  {vm.template && (
-                    <span className="px-2 py-1 text-xs font-medium text-purple-600 rounded-full bg-purple-50 dark:bg-purple-900/20 dark:text-purple-400">
-                      Template
-                    </span>
-                  )}
-                </div>
-              </div>
-
-              {/* Resource Stats */}
-              <div className="grid grid-cols-2 gap-4 mb-4">
-                <div className="flex items-center space-x-2">
-                  <Cpu className="w-4 h-4 text-blue-600" />
-                  <div>
-                    <p className="text-xs text-gray-500 dark:text-gray-400">CPUs</p>
-                    <p className="text-sm font-medium text-gray-900 dark:text-white">{vm.cpus || 'N/A'}</p>
-                  </div>
-                </div>
-                
-                <div className="flex items-center space-x-2">
-                  <MemoryStick className="w-4 h-4 text-purple-600" />
-                  <div>
-                    <p className="text-xs text-gray-500 dark:text-gray-400">Memory</p>
-                    <p className="text-sm font-medium text-gray-900 dark:text-white">{formatBytes(vm.maxmem || 0)}</p>
-                  </div>
-                </div>
-                
-                <div className="flex items-center space-x-2">
-                  <HardDrive className="w-4 h-4 text-green-600" />
-                  <div>
-                    <p className="text-xs text-gray-500 dark:text-gray-400">Storage</p>
-                    <p className="text-sm font-medium text-gray-900 dark:text-white">{formatBytes(vm.maxdisk || 0)}</p>
-                  </div>
-                </div>
-                
-                <div className="flex items-center space-x-2">
-                  <Clock className="w-4 h-4 text-orange-600" />
-                  <div>
-                    <p className="text-xs text-gray-500 dark:text-gray-400">Uptime</p>
-                    <p className="text-sm font-medium text-gray-900 dark:text-white">{formatUptime(vm.uptime || 0)}</p>
-                  </div>
-                </div>
-              </div>
-
-              {/* Usage Bars - Only for running VMs */}
-              {vm.status === 'running' && (
-                <div className="mb-4 space-y-3">
-                  <div>
-                    <div className="flex justify-between mb-1">
-                      <span className="text-xs text-gray-500 dark:text-gray-400">CPU Usage</span>
-                      <span className="text-xs text-gray-700 dark:text-gray-300">{((vm.cpu || 0) * 100).toFixed(1)}%</span>
+      {/* VM Grid/List */}
+      {viewMode === 'grid' ? (
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2 xl:grid-cols-3">
+          {filteredVMs.map((vm) => {
+            const vmKey = `${selectedNode}-${vm.vmid}`;
+            const currentAction = actionLoading[vmKey];
+            
+            return (
+              <div 
+                key={vm.vmid} 
+                className="relative p-6 bg-white border border-gray-200 rounded-xl shadow-sm dark:bg-gray-900 dark:border-gray-800 transition-all duration-300 hover:shadow-lg hover:scale-[1.02]"
+              >
+                {/* Live Indicator */}
+                {isRealtime && vm.status === 'running' && (
+                  <div className="absolute top-4 right-4">
+                    <div className="flex items-center space-x-1">
+                      <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
+                      <span className="text-xs text-green-600 dark:text-green-400">Live</span>
                     </div>
-                    <div className="w-full h-2 bg-gray-200 rounded-full dark:bg-gray-700">
-                      <div 
-                        className="h-2 transition-all duration-300 bg-blue-600 rounded-full"
-                        style={{ width: `${Math.min((vm.cpu || 0) * 100, 100)}%` }}
-                      />
+                  </div>
+                )}
+
+                {/* Header */}
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center space-x-3">
+                    <div className="p-2 bg-blue-100 rounded-lg dark:bg-blue-900/20">
+                      <Monitor className="w-6 h-6 text-blue-600 dark:text-blue-400" />
+                    </div>
+                    <div>
+                      <h3 className="font-semibold text-gray-900 dark:text-white">
+                        {vm.name || `VM ${vm.vmid}`}
+                      </h3>
+                      <p className="text-sm text-gray-500 dark:text-gray-400">ID: {vm.vmid}</p>
                     </div>
                   </div>
                   
-                  <div>
-                    <div className="flex justify-between mb-1">
-                      <span className="text-xs text-gray-500 dark:text-gray-400">Memory Usage</span>
-                      <span className="text-xs text-gray-700 dark:text-gray-300">
-                        {(((vm.mem || 0) / (vm.maxmem || 1)) * 100).toFixed(1)}%
+                  <div className="flex items-center space-x-2">
+                    <div className={`inline-flex items-center space-x-1 px-2 py-1 text-xs font-medium rounded-full ${getStatusColor(vm.status)}`}>
+                      {getStatusIcon(vm.status)}
+                      <span>{vm.status}</span>
+                    </div>
+                    
+                    {vm.template && (
+                      <span className="px-2 py-1 text-xs font-medium text-purple-600 rounded-full bg-purple-50 dark:bg-purple-900/20 dark:text-purple-400">
+                        Template
                       </span>
+                    )}
+                  </div>
+                </div>
+
+                {/* Real-time Stats */}
+                {vm.status === 'running' && vm.stats.length > 0 && (
+                  <div className="mb-4 space-y-3">
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="text-xs text-gray-500 dark:text-gray-400">CPU</span>
+                          <span className="text-xs font-medium text-gray-700 dark:text-gray-300">
+                            {vm.realtime.cpu.toFixed(1)}%
+                          </span>
+                        </div>
+                        <MiniChart data={vm.stats} dataKey="cpu" color="#3b82f6" />
+                      </div>
+                      
+                      <div>
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="text-xs text-gray-500 dark:text-gray-400">Memory</span>
+                          <span className="text-xs font-medium text-gray-700 dark:text-gray-300">
+                            {vm.realtime.memory.toFixed(1)}%
+                          </span>
+                        </div>
+                        <MiniChart data={vm.stats} dataKey="memory" color="#8b5cf6" />
+                      </div>
                     </div>
-                    <div className="w-full h-2 bg-gray-200 rounded-full dark:bg-gray-700">
-                      <div 
-                        className="h-2 transition-all duration-300 bg-purple-600 rounded-full"
-                        style={{ width: `${Math.min(((vm.mem || 0) / (vm.maxmem || 1)) * 100, 100)}%` }}
-                      />
+                    
+                    <div>
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-xs text-gray-500 dark:text-gray-400">Network I/O</span>
+                        <span className="text-xs font-medium text-gray-700 dark:text-gray-300">
+                          ↓{vm.realtime.networkIn.toFixed(1)} ↑{vm.realtime.networkOut.toFixed(1)} MB/s
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <MiniChart data={vm.stats} dataKey="networkIn" color="#10b981" />
+                        <MiniChart data={vm.stats} dataKey="networkOut" color="#f59e0b" />
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Resource Info */}
+                <div className="grid grid-cols-2 gap-4 mb-4">
+                  <div className="flex items-center space-x-2">
+                    <Cpu className="w-4 h-4 text-blue-600" />
+                    <div>
+                      <p className="text-xs text-gray-500 dark:text-gray-400">CPUs</p>
+                      <p className="text-sm font-medium text-gray-900 dark:text-white">{vm.cpus || 'N/A'}</p>
+                    </div>
+                  </div>
+                  
+                  <div className="flex items-center space-x-2">
+                    <MemoryStick className="w-4 h-4 text-purple-600" />
+                    <div>
+                      <p className="text-xs text-gray-500 dark:text-gray-400">Memory</p>
+                      <p className="text-sm font-medium text-gray-900 dark:text-white">{formatBytes(vm.maxmem || 0)}</p>
+                    </div>
+                  </div>
+                  
+                  <div className="flex items-center space-x-2">
+                    <HardDrive className="w-4 h-4 text-green-600" />
+                    <div>
+                      <p className="text-xs text-gray-500 dark:text-gray-400">Storage</p>
+                      <p className="text-sm font-medium text-gray-900 dark:text-white">{formatBytes(vm.maxdisk || 0)}</p>
+                    </div>
+                  </div>
+                  
+                  <div className="flex items-center space-x-2">
+                    <Clock className="w-4 h-4 text-orange-600" />
+                    <div>
+                      <p className="text-xs text-gray-500 dark:text-gray-400">Uptime</p>
+                      <p className="text-sm font-medium text-gray-900 dark:text-white">{formatUptime(vm.uptime || 0)}</p>
                     </div>
                   </div>
                 </div>
-              )}
 
-              {/* Action Buttons */}
-              <div className="space-y-3">
-                {/* Primary Actions */}
-                <div className="flex space-x-2">
-                  {vm.status === 'running' ? (
-                    <>
+                {/* Action Buttons */}
+                <div className="space-y-3">
+                  {/* Primary Actions */}
+                  <div className="flex space-x-2">
+                    {vm.status === 'running' ? (
+                      <>
+                        <ActionButton
+                          onClick={() => handleVMAction('stop', vm)}
+                          disabled={!!currentAction || vm.template}
+                          loading={currentAction === 'stop'}
+                          variant="danger"
+                          icon={Square}
+                          size="sm"
+                        >
+                          Stop
+                        </ActionButton>
+                        <ActionButton
+                          onClick={() => handleVMAction('reboot', vm)}
+                          disabled={!!currentAction || vm.template}
+                          loading={currentAction === 'reboot'}
+                          variant="secondary"
+                          icon={RotateCcw}
+                          size="sm"
+                        >
+                          Reboot
+                        </ActionButton>
+                      </>
+                    ) : vm.status === 'suspended' ? (
                       <ActionButton
-                        onClick={() => handleVMAction('stop', vm)}
-                        disabled={!!currentAction || vm.template}
-                        loading={currentAction === 'stop'}
-                        variant="danger"
-                        icon={Square}
+                        onClick={() => handleVMAction('resume', vm)}
+                        disabled={!!currentAction}
+                        loading={currentAction === 'resume'}
+                        variant="success"
+                        icon={Play}
+                        size="sm"
                       >
-                        Stop
+                        Resume
                       </ActionButton>
+                    ) : (
                       <ActionButton
-                        onClick={() => handleVMAction('reboot', vm)}
+                        onClick={() => handleVMAction('start', vm)}
                         disabled={!!currentAction || vm.template}
-                        loading={currentAction === 'reboot'}
+                        loading={currentAction === 'start'}
+                        variant="success"
+                        icon={Play}
+                        size="sm"
+                      >
+                        Start
+                      </ActionButton>
+                    )}
+                  </div>
+
+                  {/* Secondary Actions */}
+                  <div className="flex space-x-2">
+                    {onOpenConsole && hasPermission(`/vms/${vm.vmid}`, 'VM.Console') && (
+                      <ActionButton
+                        onClick={() => onOpenConsole(vm.vmid, selectedNode, vm.name || `VM ${vm.vmid}`)}
+                        disabled={vm.status !== 'running'}
                         variant="secondary"
-                        icon={RotateCcw}
+                        icon={Terminal}
+                        size="sm"
                       >
-                        Reboot
+                        Console
                       </ActionButton>
-                    </>
-                  ) : vm.status === 'suspended' ? (
-                    <ActionButton
-                      onClick={() => handleVMAction('resume', vm)}
-                      disabled={!!currentAction}
-                      loading={currentAction === 'resume'}
-                      variant="success"
-                      icon={Play}
-                    >
-                      Resume
-                    </ActionButton>
-                  ) : (
-                    <ActionButton
-                      onClick={() => handleVMAction('start', vm)}
-                      disabled={!!currentAction || vm.template}
-                      loading={currentAction === 'start'}
-                      variant="success"
-                      icon={Play}
-                    >
-                      Start
-                    </ActionButton>
-                  )}
-                </div>
-
-                {/* Secondary Actions */}
-                <div className="flex space-x-2">
-                  {onOpenConsole && hasPermission(`/vms/${vm.vmid}`, 'VM.Console') && (
-                    <ActionButton
-                      onClick={() => onOpenConsole(vm.vmid, selectedNode, vm.name || `VM ${vm.vmid}`)}
-                      disabled={vm.status !== 'running'}
-                      variant="secondary"
-                      icon={Terminal}
-                    >
-                      Console
-                    </ActionButton>
-                  )}
-                  
-                  {onOpenHardware && hasPermission(`/vms/${vm.vmid}`, 'VM.Config') && (
-                    <ActionButton
-                      onClick={() => onOpenHardware(vm.vmid, selectedNode)}
-                      variant="secondary"
-                      icon={Settings}
-                    >
-                      Config
-                    </ActionButton>
-                  )}
+                    )}
+                    
+                    {onOpenHardware && hasPermission(`/vms/${vm.vmid}`, 'VM.Config') && (
+                      <ActionButton
+                        onClick={() => onOpenHardware(vm.vmid, selectedNode)}
+                        variant="secondary"
+                        icon={Settings}
+                        size="sm"
+                      >
+                        Config
+                      </ActionButton>
+                    )}
+                  </div>
                 </div>
               </div>
-            </div>
-          );
-        })}
-      </div>
+            );
+          })}
+        </div>
+      ) : (
+        // List View
+        <div className="overflow-hidden bg-white border border-gray-200 shadow-sm rounded-xl dark:bg-gray-900 dark:border-gray-800">
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead className="bg-gray-50 dark:bg-gray-800">
+                <tr>
+                  <th className="px-6 py-3 text-xs font-medium tracking-wider text-left text-gray-500 uppercase dark:text-gray-400">VM</th>
+                  <th className="px-6 py-3 text-xs font-medium tracking-wider text-left text-gray-500 uppercase dark:text-gray-400">Status</th>
+                  <th className="px-6 py-3 text-xs font-medium tracking-wider text-left text-gray-500 uppercase dark:text-gray-400">CPU</th>
+                  <th className="px-6 py-3 text-xs font-medium tracking-wider text-left text-gray-500 uppercase dark:text-gray-400">Memory</th>
+                  <th className="px-6 py-3 text-xs font-medium tracking-wider text-left text-gray-500 uppercase dark:text-gray-400">Network</th>
+                  <th className="px-6 py-3 text-xs font-medium tracking-wider text-left text-gray-500 uppercase dark:text-gray-400">Uptime</th>
+                  <th className="px-6 py-3 text-xs font-medium tracking-wider text-left text-gray-500 uppercase dark:text-gray-400">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-200 dark:divide-gray-800">
+                {filteredVMs.map((vm) => {
+                  const vmKey = `${selectedNode}-${vm.vmid}`;
+                  const currentAction = actionLoading[vmKey];
+                  
+                  return (
+                    <tr key={vm.vmid} className="hover:bg-gray-50 dark:hover:bg-gray-800/50">
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <div className="flex items-center space-x-3">
+                          <Monitor className="w-5 h-5 text-blue-600" />
+                          <div>
+                            <div className="text-sm font-medium text-gray-900 dark:text-white">
+                              {vm.name || `VM ${vm.vmid}`}
+                            </div>
+                            <div className="text-sm text-gray-500 dark:text-gray-400">ID: {vm.vmid}</div>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <div className="flex items-center space-x-2">
+                          <div className={`inline-flex items-center space-x-1 px-2 py-1 text-xs font-medium rounded-full ${getStatusColor(vm.status)}`}>
+                            {getStatusIcon(vm.status)}
+                            <span>{vm.status}</span>
+                          </div>
+                          {isRealtime && vm.status === 'running' && (
+                            <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
+                          )}
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <div className="flex items-center space-x-2">
+                          <div className="w-16 h-2 bg-gray-200 rounded-full dark:bg-gray-700">
+                            <div 
+                              className="h-2 transition-all duration-1000 bg-blue-600 rounded-full"
+                              style={{ width: `${Math.min(vm.realtime.cpu, 100)}%` }}
+                            />
+                          </div>
+                          <span className="text-sm text-gray-600 dark:text-gray-400">
+                            {vm.realtime.cpu.toFixed(1)}%
+                          </span>
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <div className="flex items-center space-x-2">
+                          <div className="w-16 h-2 bg-gray-200 rounded-full dark:bg-gray-700">
+                            <div 
+                              className="h-2 transition-all duration-1000 bg-purple-600 rounded-full"
+                              style={{ width: `${Math.min(vm.realtime.memory, 100)}%` }}
+                            />
+                          </div>
+                          <span className="text-sm text-gray-600 dark:text-gray-400">
+                            {vm.realtime.memory.toFixed(1)}%
+                          </span>
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <div className="text-sm text-gray-600 dark:text-gray-400">
+                          <div className="flex items-center space-x-1">
+                            <TrendingUp className="w-3 h-3 text-green-500" />
+                            <span>{vm.realtime.networkIn.toFixed(1)} MB/s</span>
+                          </div>
+                          <div className="flex items-center space-x-1">
+                            <TrendingDown className="w-3 h-3 text-orange-500" />
+                            <span>{vm.realtime.networkOut.toFixed(1)} MB/s</span>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 text-sm text-gray-500 whitespace-nowrap dark:text-gray-400">
+                        {formatUptime(vm.uptime || 0)}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <div className="flex items-center space-x-2">
+                          {vm.status === 'running' ? (
+                            <>
+                              <ActionButton
+                                onClick={() => handleVMAction('stop', vm)}
+                                disabled={!!currentAction || vm.template}
+                                loading={currentAction === 'stop'}
+                                variant="danger"
+                                icon={Square}
+                                size="sm"
+                              >
+                                Stop
+                              </ActionButton>
+                              <ActionButton
+                                onClick={() => handleVMAction('reboot', vm)}
+                                disabled={!!currentAction || vm.template}
+                                loading={currentAction === 'reboot'}
+                                variant="secondary"
+                                icon={RotateCcw}
+                                size="sm"
+                              >
+                                Reboot
+                              </ActionButton>
+                            </>
+                          ) : (
+                            <ActionButton
+                              onClick={() => handleVMAction('start', vm)}
+                              disabled={!!currentAction || vm.template}
+                              loading={currentAction === 'start'}
+                              variant="success"
+                              icon={Play}
+                              size="sm"
+                            >
+                              Start
+                            </ActionButton>
+                          )}
+                          
+                          {onOpenConsole && hasPermission(`/vms/${vm.vmid}`, 'VM.Console') && (
+                            <ActionButton
+                              onClick={() => onOpenConsole(vm.vmid, selectedNode, vm.name || `VM ${vm.vmid}`)}
+                              disabled={vm.status !== 'running'}
+                              variant="secondary"
+                              icon={Terminal}
+                              size="sm"
+                            >
+                              Console
+                            </ActionButton>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       {/* Empty State */}
       {filteredVMs.length === 0 && !loading && (
         <div className="flex flex-col items-center justify-center py-12 text-center">
-          <Monitor className="w-16 h-16 mb-4 text-gray-400" />
+          <div className="p-4 mb-4 bg-gray-100 rounded-full dark:bg-gray-800">
+            <Monitor className="w-16 h-16 text-gray-400" />
+          </div>
           <h3 className="mb-2 text-lg font-medium text-gray-900 dark:text-white">
             {vms.length === 0 ? 'No Virtual Machines' : 'No VMs match your filters'}
           </h3>

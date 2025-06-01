@@ -1,3 +1,4 @@
+// src/renderer/types/proxmox.ts
 export interface ProxmoxNode {
   node: string;
   status: 'online' | 'offline';
@@ -66,7 +67,7 @@ export interface ProxmoxBackup {
 
 export interface ClusterResource {
   id: string;
-  type: 'node' | 'vm' | 'storage';
+  type: 'node' | 'vm' | 'storage' | 'lxc';
   node?: string;
   vmid?: number;
   status: string;
