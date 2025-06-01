@@ -1,4 +1,4 @@
-// src/renderer/components/Dashboard.tsx
+// src/renderer/components/Dashboard.tsx - Fixed version
 import React, { useEffect, useState, useRef } from 'react';
 import { 
   Activity, 
@@ -16,7 +16,8 @@ import {
   Minus,
   Network,
   Database,
-  Gauge
+  Gauge,
+  RefreshCw
 } from 'lucide-react';
 import { 
   AreaChart, 
@@ -35,7 +36,6 @@ import {
   Cell
 } from 'recharts';
 import { useProxmox } from '../hooks/useProxmox';
-import {DemoDashboard }from './DemoComponents';
 
 interface SystemMetrics {
   timestamp: number;
@@ -71,8 +71,7 @@ const Dashboard: React.FC = () => {
     error, 
     fetchNodes, 
     fetchClusterResources,
-    getUserInfo,
-    getNodeStats
+    getUserInfo
   } = useProxmox();
   
   const [metrics, setMetrics] = useState<SystemMetrics[]>([]);
@@ -80,98 +79,165 @@ const Dashboard: React.FC = () => {
   const [userInfo, setUserInfo] = useState<any>(null);
   const [refreshInterval, setRefreshInterval] = useState<NodeJS.Timeout | null>(null);
   const [isRealtime, setIsRealtime] = useState(true);
+  const [connectionStatus, setConnectionStatus] = useState<'connected' | 'disconnected' | 'connecting'>('connecting');
   const metricsRef = useRef<SystemMetrics[]>([]);
 
   useEffect(() => {
     initializeDashboard();
     
-    // Real-time updates every 1 second
+    // Real-time updates every 2 seconds
     const interval = setInterval(() => {
-      if (isRealtime && nodes.length > 0) {
+      if (isRealtime) {
         fetchRealTimeData();
       }
-    }, 1000);
+    }, 2000);
 
     setRefreshInterval(interval);
 
     return () => {
       if (interval) clearInterval(interval);
     };
-  }, [isRealtime, nodes.length]);
+  }, [isRealtime]);
 
   const initializeDashboard = async () => {
     try {
+      setConnectionStatus('connecting');
+      
+      // Try to fetch data
       await fetchNodes();
       await fetchClusterResources();
-      const info = await getUserInfo();
-      setUserInfo(info);
+      
+      try {
+        const info = await getUserInfo();
+        setUserInfo(info);
+      } catch (userError) {
+        console.log('User info not available, using defaults');
+        setUserInfo({ userid: 'demo@pam', firstname: 'Demo', lastname: 'User' });
+      }
+      
+      setConnectionStatus('connected');
       await fetchRealTimeData();
     } catch (error) {
-      console.error('Failed to initialize dashboard:', error);
-      // Don't show error if just not connected - the component will handle it
+      console.log('Connection failed, using demo data');
+      setConnectionStatus('disconnected');
+      loadDemoData();
     }
   };
 
+  const loadDemoData = () => {
+    // Load demo data when not connected
+    const demoNodes = [
+      {
+        node: 'pve-node1',
+        status: 'online' as const,
+        cpu: 0.25,
+        maxcpu: 8,
+        mem: 8589934592,
+        maxmem: 16777216000,
+        disk: 32212254720,
+        maxdisk: 107374182400,
+        uptime: 123456,
+        level: '',
+        id: 'node/pve-node1',
+        type: 'node'
+      },
+      {
+        node: 'pve-node2',
+        status: 'online' as const,
+        cpu: 0.15,
+        maxcpu: 4,
+        mem: 4294967296,
+        maxmem: 8589934592,
+        disk: 21474836480,
+        maxdisk: 53687091200,
+        uptime: 98765,
+        level: '',
+        id: 'node/pve-node2',
+        type: 'node'
+      }
+    ];
+
+    const demoResources = [
+      // VMs
+      { id: 'qemu/100', type: 'vm' as const, node: 'pve-node1', vmid: 100, status: 'running', cpu: 0.12, maxcpu: 2, mem: 2147483648, maxmem: 4294967296 },
+      { id: 'qemu/101', type: 'vm' as const, node: 'pve-node1', vmid: 101, status: 'stopped', cpu: 0, maxcpu: 1, mem: 0, maxmem: 2147483648 },
+      { id: 'qemu/102', type: 'vm' as const, node: 'pve-node2', vmid: 102, status: 'running', cpu: 0.08, maxcpu: 1, mem: 1073741824, maxmem: 2147483648 },
+      // Containers
+      { id: 'lxc/200', type: 'lxc' as const, node: 'pve-node1', vmid: 200, status: 'running', cpu: 0.05, maxcpu: 1, mem: 536870912, maxmem: 1073741824 },
+      { id: 'lxc/201', type: 'lxc' as const, node: 'pve-node2', vmid: 201, status: 'stopped', cpu: 0, maxcpu: 1, mem: 0, maxmem: 1073741824 }
+    ];
+
+    // Update the global state with demo data
+    (window as any).__DEMO_NODES__ = demoNodes;
+    (window as any).__DEMO_RESOURCES__ = demoResources;
+    
+    // Force re-render by triggering the hooks
+    setTimeout(() => {
+      fetchRealTimeData();
+    }, 100);
+  };
+
   const fetchRealTimeData = async () => {
-    if (nodes.length === 0) return;
-
+    const currentTime = Date.now();
+    
     try {
-      const newRealtimeStats: RealtimeStats[] = [];
-      const currentTime = Date.now();
-
-      for (const node of nodes) {
-        try {
-          // Simulate real-time data with some randomness for demo
-          const baseLoad = Math.random() * 0.3 + 0.1; // 10-40% base load
-          const cpuUsage = Math.max(0, Math.min(100, baseLoad * 100 + (Math.random() - 0.5) * 20));
-          const memoryUsage = Math.max(0, Math.min(100, baseLoad * 80 + (Math.random() - 0.5) * 15));
-          const diskUsage = Math.max(0, Math.min(100, 30 + (Math.random() - 0.5) * 10));
-          
-          const nodeVMs = clusterResources.filter(r => r.type === 'vm' && r.node === node.node);
-          const runningVMs = nodeVMs.filter(vm => vm.status === 'running');
-          const nodeContainers = clusterResources.filter(r => r.type === 'lxc' && r.node === node.node);
-          const runningContainers = nodeContainers.filter(ct => ct.status === 'running');
-
-          const realtimeStat: RealtimeStats = {
-            node: node.node,
-            cpu: cpuUsage,
-            memory: memoryUsage,
-            disk: diskUsage,
-            networkIn: Math.random() * 100, // MB/s
-            networkOut: Math.random() * 50, // MB/s
-            load: [
-              Math.random() * 2,
-              Math.random() * 1.5,
-              Math.random() * 1.2
-            ],
-            vms: nodeVMs.length,
-            runningVms: runningVMs.length,
-            containers: nodeContainers.length,
-            runningContainers: runningContainers.length
-          };
-
-          newRealtimeStats.push(realtimeStat);
-
-          // Add to historical metrics
-          const newMetric: SystemMetrics = {
-            timestamp: currentTime,
-            cpu: cpuUsage,
-            memory: memoryUsage,
-            disk: diskUsage,
-            network_in: realtimeStat.networkIn,
-            network_out: realtimeStat.networkOut,
-            load1: realtimeStat.load[0],
-            load5: realtimeStat.load[1],
-            load15: realtimeStat.load[2]
-          };
-
-          metricsRef.current.push(newMetric);
-        } catch (err) {
-          console.warn(`Failed to fetch stats for ${node.node}:`, err);
-        }
+      // Use actual nodes if available, otherwise use demo data
+      const activeNodes = nodes.length > 0 ? nodes : (window as any).__DEMO_NODES__ || [];
+      const activeResources = clusterResources.length > 0 ? clusterResources : (window as any).__DEMO_RESOURCES__ || [];
+      
+      if (activeNodes.length === 0) {
+        return; // No data available
       }
 
-      // Keep only last 60 data points (1 minute of data)
+      const newRealtimeStats: RealtimeStats[] = [];
+
+      for (const node of activeNodes) {
+        const baseLoad = Math.random() * 0.3 + 0.1;
+        const cpuUsage = Math.max(0, Math.min(100, (node.cpu || baseLoad) * 100 + (Math.random() - 0.5) * 10));
+        const memoryUsage = Math.max(0, Math.min(100, ((node.mem || 0) / (node.maxmem || 1)) * 100));
+        
+        const nodeVMs = activeResources.filter((r: { type: string; node: any; }) => r.type === 'vm' && r.node === node.node);
+        const runningVMs = nodeVMs.filter((vm: { status: string; }) => vm.status === 'running');
+        const nodeContainers = activeResources.filter((r: { type: string; node: any; }) => r.type === 'lxc' && r.node === node.node);
+        const runningContainers = nodeContainers.filter((ct: { status: string; }) => ct.status === 'running');
+
+        const realtimeStat: RealtimeStats = {
+          node: node.node,
+          cpu: cpuUsage,
+          memory: memoryUsage,
+          disk: Math.max(0, Math.min(100, ((node.disk || 0) / (node.maxdisk || 1)) * 100)),
+          networkIn: Math.random() * 100,
+          networkOut: Math.random() * 50,
+          load: [
+            Math.random() * 2,
+            Math.random() * 1.5,
+            Math.random() * 1.2
+          ],
+          vms: nodeVMs.length,
+          runningVms: runningVMs.length,
+          containers: nodeContainers.length,
+          runningContainers: runningContainers.length
+        };
+
+        newRealtimeStats.push(realtimeStat);
+
+        // Add to historical metrics
+        const newMetric: SystemMetrics = {
+          timestamp: currentTime,
+          cpu: cpuUsage,
+          memory: memoryUsage,
+          disk: realtimeStat.disk,
+          network_in: realtimeStat.networkIn,
+          network_out: realtimeStat.networkOut,
+          load1: realtimeStat.load[0],
+          load5: realtimeStat.load[1],
+          load15: realtimeStat.load[2]
+        };
+
+        metricsRef.current.push(newMetric);
+      }
+
+      // Keep only last 60 data points
       if (metricsRef.current.length > 60) {
         metricsRef.current = metricsRef.current.slice(-60);
       }
@@ -183,42 +249,15 @@ const Dashboard: React.FC = () => {
     }
   };
 
-  if (loading && nodes.length === 0) {
-    return (
-      <div className="flex items-center justify-center min-h-screen">
-        <div className="flex flex-col items-center space-y-4">
-          <div className="w-8 h-8 border-4 border-blue-200 rounded-full border-t-blue-600 animate-spin"></div>
-          <p className="text-sm text-gray-600 dark:text-gray-400">Loading cluster data...</p>
-        </div>
-      </div>
-    );
-  }
-
-  if (error && !error.includes('Not connected')) {
-    return (
-      <div className="flex items-center justify-center min-h-screen">
-        <div className="flex flex-col items-center space-y-4 text-center">
-          <AlertTriangle className="w-12 h-12 text-red-500" />
-          <div>
-            <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Connection Error</h3>
-            <p className="text-sm text-gray-600 dark:text-gray-400">{error}</p>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // Show demo when not connected or no nodes available
-  if (nodes.length === 0 || error?.includes('Not connected')) {
-    return <DemoDashboard />;
-  }
-
   // Calculate cluster-wide statistics
-  const totalVMs = clusterResources.filter(r => r.type === 'vm').length;
-  const runningVMs = clusterResources.filter(r => r.type === 'vm' && r.status === 'running').length;
-  const totalContainers = clusterResources.filter(r => r.type === 'lxc').length;
-  const runningContainers = clusterResources.filter(r => r.type === 'lxc' && r.status === 'running').length;
-  const onlineNodes = nodes.filter(n => n.status === 'online').length;
+  const activeNodes = nodes.length > 0 ? nodes : (window as any).__DEMO_NODES__ || [];
+  const activeResources = clusterResources.length > 0 ? clusterResources : (window as any).__DEMO_RESOURCES__ || [];
+  
+  const totalVMs = activeResources.filter((r: { type: string; }) => r.type === 'vm').length;
+  const runningVMs = activeResources.filter((r: { type: string; status: string; }) => r.type === 'vm' && r.status === 'running').length;
+  const totalContainers = activeResources.filter((r: { type: string; }) => r.type === 'lxc').length;
+  const runningContainers = activeResources.filter((r: { type: string; status: string; }) => r.type === 'lxc' && r.status === 'running').length;
+  const onlineNodes = activeNodes.filter((n: { status: string; }) => n.status === 'online').length;
 
   // Aggregate real-time stats
   const avgCpuUsage = realtimeStats.length > 0 ? 
@@ -282,7 +321,9 @@ const Dashboard: React.FC = () => {
         <div className="mt-2">
           <div className="flex items-center space-x-2">
             <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
-            <span className="text-xs text-green-600 dark:text-green-400">Live</span>
+            <span className="text-xs text-green-600 dark:text-green-400">
+              {connectionStatus === 'connected' ? 'Live' : 'Demo'}
+            </span>
           </div>
         </div>
       )}
@@ -331,6 +372,17 @@ const Dashboard: React.FC = () => {
     );
   };
 
+  if (loading && activeNodes.length === 0) {
+    return (
+      <div className="flex items-center justify-center min-h-screen">
+        <div className="flex flex-col items-center space-y-4">
+          <div className="w-8 h-8 border-4 border-blue-200 rounded-full border-t-blue-600 animate-spin"></div>
+          <p className="text-sm text-gray-600 dark:text-gray-400">Loading cluster data...</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen p-6 space-y-8 bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-950 dark:to-gray-900">
       {/* Header */}
@@ -342,6 +394,11 @@ const Dashboard: React.FC = () => {
           <p className="text-gray-600 dark:text-gray-400">
             Welcome back, {userInfo?.firstname || userInfo?.userid?.split('@')[0] || 'Administrator'}
           </p>
+          {connectionStatus === 'disconnected' && (
+            <p className="text-sm text-yellow-600 dark:text-yellow-400">
+              ⚠️ Demo mode - Connect to Proxmox for real data
+            </p>
+          )}
         </div>
         <div className="flex items-center space-x-4">
           <button
@@ -355,10 +412,13 @@ const Dashboard: React.FC = () => {
             <Activity className="w-4 h-4" />
             <span>{isRealtime ? 'Live' : 'Paused'}</span>
           </button>
-          <div className="flex items-center space-x-2 text-sm text-gray-500 dark:text-gray-400">
-            <Zap className="w-4 h-4" />
-            <span>1s refresh</span>
-          </div>
+          <button
+            onClick={initializeDashboard}
+            className="flex items-center px-4 py-2 space-x-2 text-white transition-colors bg-blue-600 rounded-lg hover:bg-blue-700"
+          >
+            <RefreshCw className="w-4 h-4" />
+            <span>Refresh</span>
+          </button>
         </div>
       </div>
 
@@ -366,9 +426,9 @@ const Dashboard: React.FC = () => {
       <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-4">
         <MetricCard
           title="Cluster Health"
-          value={`${onlineNodes}/${nodes.length}`}
-          change={onlineNodes === nodes.length ? "All online" : `${nodes.length - onlineNodes} offline`}
-          trend={onlineNodes === nodes.length ? 'stable' : 'down'}
+          value={`${onlineNodes}/${activeNodes.length}`}
+          change={onlineNodes === activeNodes.length ? "All online" : `${activeNodes.length - onlineNodes} offline`}
+          trend={onlineNodes === activeNodes.length ? 'stable' : 'down'}
           icon={Server}
           color="bg-gradient-to-br from-blue-500 to-blue-600"
           realtime={isRealtime}
@@ -377,7 +437,7 @@ const Dashboard: React.FC = () => {
         <MetricCard
           title="Virtual Machines"
           value={`${runningVMs}/${totalVMs}`}
-          change={`${Math.round((runningVMs / totalVMs) * 100)}% active`}
+          change={`${Math.round((runningVMs / Math.max(totalVMs, 1)) * 100)}% active`}
           trend={runningVMs > totalVMs * 0.8 ? 'up' : 'stable'}
           icon={Monitor}
           color="bg-gradient-to-br from-green-500 to-green-600"
@@ -387,7 +447,7 @@ const Dashboard: React.FC = () => {
         <MetricCard
           title="Containers"
           value={`${runningContainers}/${totalContainers}`}
-          change={`${Math.round((runningContainers / totalContainers) * 100)}% active`}
+          change={`${Math.round((runningContainers / Math.max(totalContainers, 1)) * 100)}% active`}
           trend={runningContainers > totalContainers * 0.8 ? 'up' : 'stable'}
           icon={Database}
           color="bg-gradient-to-br from-purple-500 to-purple-600"
@@ -411,7 +471,9 @@ const Dashboard: React.FC = () => {
           <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Resource Utilization</h3>
           <div className="flex items-center space-x-2">
             <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
-            <span className="text-sm text-green-600 dark:text-green-400">Real-time</span>
+            <span className="text-sm text-green-600 dark:text-green-400">
+              {connectionStatus === 'connected' ? 'Real-time' : 'Demo mode'}
+            </span>
           </div>
         </div>
         <div className="grid grid-cols-2 gap-8 md:grid-cols-4">
@@ -422,15 +484,15 @@ const Dashboard: React.FC = () => {
         </div>
       </div>
 
-      {/* Real-time Performance Charts */}
+      {/* Performance Charts */}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         <div className="p-6 bg-white border border-gray-200 shadow-sm rounded-xl dark:bg-gray-900 dark:border-gray-800">
           <div className="mb-6">
             <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
-              CPU & Memory Usage (Live)
+              CPU & Memory Usage
             </h3>
             <p className="text-sm text-gray-600 dark:text-gray-400">
-              Last 60 seconds • Updates every second
+              Last 60 data points • Updates every 2 seconds
             </p>
           </div>
           <ResponsiveContainer width="100%" height={300}>
@@ -495,7 +557,7 @@ const Dashboard: React.FC = () => {
         <div className="p-6 bg-white border border-gray-200 shadow-sm rounded-xl dark:bg-gray-900 dark:border-gray-800">
           <div className="mb-6">
             <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
-              Network Traffic (Live)
+              Network Traffic
             </h3>
             <p className="text-sm text-gray-600 dark:text-gray-400">
               Real-time network I/O in MB/s
@@ -553,7 +615,7 @@ const Dashboard: React.FC = () => {
       {/* Node Details Table */}
       <div className="p-6 bg-white border border-gray-200 shadow-sm rounded-xl dark:bg-gray-900 dark:border-gray-800">
         <h3 className="mb-6 text-lg font-semibold text-gray-900 dark:text-white">
-          Cluster Nodes (Real-time)
+          Cluster Nodes ({connectionStatus === 'connected' ? 'Real-time' : 'Demo'})
         </h3>
         <div className="overflow-x-auto">
           <table className="w-full">
@@ -563,8 +625,8 @@ const Dashboard: React.FC = () => {
                 <th className="px-4 py-3 text-sm font-medium text-left text-gray-600 dark:text-gray-400">Status</th>
                 <th className="px-4 py-3 text-sm font-medium text-left text-gray-600 dark:text-gray-400">CPU</th>
                 <th className="px-4 py-3 text-sm font-medium text-left text-gray-600 dark:text-gray-400">Memory</th>
-                <th className="px-4 py-3 text-sm font-medium text-left text-gray-600 dark:text-gray-400">Network</th>
-                <th className="px-4 py-3 text-sm font-medium text-left text-gray-600 dark:text-gray-400">Load</th>
+                <th className="px-4 py-3 text-sm font-medium text-left text-gray-600 dark:text-gray-400">Storage</th>
+                <th className="px-4 py-3 text-sm font-medium text-left text-gray-600 dark:text-gray-400">Uptime</th>
                 <th className="px-4 py-3 text-sm font-medium text-left text-gray-600 dark:text-gray-400">VMs/CTs</th>
               </tr>
             </thead>
@@ -583,7 +645,7 @@ const Dashboard: React.FC = () => {
                       <span className="text-sm font-medium text-green-600 dark:text-green-400">
                         online
                       </span>
-                      <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
+                      {isRealtime && <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>}
                     </div>
                   </td>
                   <td className="px-4 py-3">
@@ -613,25 +675,22 @@ const Dashboard: React.FC = () => {
                     </div>
                   </td>
                   <td className="px-4 py-3">
-                    <div className="text-sm text-gray-600 dark:text-gray-400">
-                      <div className="flex items-center space-x-1">
-                        <TrendingUp className="w-3 h-3 text-green-500" />
-                        <span>{stat.networkIn.toFixed(1)} MB/s</span>
+                    <div className="flex items-center space-x-2">
+                      <div className="w-16 h-2 bg-gray-200 rounded-full dark:bg-gray-700">
+                        <div 
+                          className="h-2 transition-all duration-1000 bg-green-600 rounded-full"
+                          style={{ width: `${Math.min(stat.disk, 100)}%` }}
+                        />
                       </div>
-                      <div className="flex items-center space-x-1">
-                        <TrendingDown className="w-3 h-3 text-orange-500" />
-                        <span>{stat.networkOut.toFixed(1)} MB/s</span>
-                      </div>
+                      <span className="text-sm text-gray-600 dark:text-gray-400">
+                        {stat.disk.toFixed(1)}%
+                      </span>
                     </div>
                   </td>
                   <td className="px-4 py-3">
-                    <div className="text-sm text-gray-600 dark:text-gray-400">
-                      {stat.load.map((load, i) => (
-                        <div key={i}>
-                          {load.toFixed(2)}
-                        </div>
-                      ))}
-                    </div>
+                    <span className="text-sm text-gray-600 dark:text-gray-400">
+                      {formatUptime(activeNodes[index]?.uptime || 123456)}
+                    </span>
                   </td>
                   <td className="px-4 py-3">
                     <div className="text-sm text-gray-600 dark:text-gray-400">
