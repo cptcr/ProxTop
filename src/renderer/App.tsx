@@ -1,4 +1,4 @@
-// src/renderer/App.tsx - Clean, minimalistic UI with real Proxmox data only
+// src/renderer/App.tsx - Improved with better connection handling
 import React, { useState, useEffect } from 'react';
 import { 
   Activity, 
@@ -20,9 +20,13 @@ import {
   BarChart3,
   Shield,
   Cloud,
-  AlertTriangle
+  AlertTriangle,
+  Wifi,
+  WifiOff
 } from 'lucide-react';
 import { ThemeProvider, useTheme } from './contexts/ThemeContext';
+import { useProxmox } from './hooks/useProxmox';
+import ConnectionManager from './components/ConnectionManager';
 import Dashboard from './components/Dashboard';
 import NodeManager from './components/NodeManager';
 import VMManager from './components/VMManager';
@@ -31,36 +35,23 @@ import StorageManager from './components/StorageManager';
 import NetworkManager from './components/NetworkManager';
 import BackupManager from './components/BackupManager';
 import SettingsComponent from './components/Settings';
-import InstanceManager from './components/InstanceManager';
 import UserManager from './components/UserManager';
 import ISOManager from './components/ISOManager';
-import VMHardwareManager from './components/VMHardwareManager';
-import NoVNCConsole from './components/NoVNCConsole';
 
-type TabType = 'dashboard' | 'nodes' | 'vms' | 'containers' | 'storage' | 'network' | 'backups' | 'instances' | 'settings' | 'users' | 'iso';
+type TabType = 'connection' | 'dashboard' | 'nodes' | 'vms' | 'containers' | 'storage' | 'network' | 'backups' | 'settings' | 'users' | 'iso';
 
-interface ProxmoxInstance {
-  id: string;
+interface NavigationItem {
+  id: TabType;
+  label: string;
+  icon: React.FC<{ className?: string }>;
+  requiresConnection?: boolean;
+  description?: string;
+  color?: string;
+}
+
+interface NavigationSection {
   name: string;
-  host: string;
-  port: number;
-  username: string;
-  password: string;
-  realm: string;
-  ignoreSSL: boolean;
-  connected: boolean;
-  lastConnected?: Date;
-}
-
-interface VMConsoleState {
-  vmId: number;
-  nodeId: string;
-  vmName: string;
-}
-
-interface VMHardwareState {
-  vmId: number;
-  nodeId: string;
+  items: NavigationItem[];
 }
 
 interface ConnectionConfig {
@@ -72,92 +63,133 @@ interface ConnectionConfig {
   ignoreSSL: boolean;
 }
 
-interface ConnectionState {
-  connected: boolean;
-  config: ConnectionConfig | null;
-}
-
 const AppContent: React.FC = () => {
   const { isDarkMode, toggleDarkMode } = useTheme();
-  const [activeTab, setActiveTab] = useState<TabType>('instances');
-  const [currentInstance, setCurrentInstance] = useState<ProxmoxInstance | null>(null);
-  const [showVMHardware, setShowVMHardware] = useState<VMHardwareState | null>(null);
-  const [showVMConsole, setShowVMConsole] = useState<VMConsoleState | null>(null);
-  const [connectionState, setConnectionState] = useState<ConnectionState>({
-    connected: false,
-    config: null
-  });
+  const [activeTab, setActiveTab] = useState<TabType>('connection');
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [currentConfig, setCurrentConfig] = useState<ConnectionConfig | null>(null);
 
+  const {
+    nodes,
+    clusterResources,
+    loading,
+    error,
+    fetchNodes,
+    fetchClusterResources,
+  } = useProxmox();
+
+  const [isConnected, setIsConnected] = useState(false);
+  const [isConnecting, setIsConnecting] = useState(false);
+  const [connectionError, setConnectionError] = useState<string | null>(null);
+  const [errors, setErrors] = useState<string[]>([]);
+  
+  // Simple error management
+  const addError = (error: string) => {
+    setErrors(prev => [error, ...prev.slice(0, 4)]); // Keep last 5 errors
+  };
+  
+  const clearErrors = () => {
+    setErrors([]);
+  };
+
+  // Handle initial connection check
   useEffect(() => {
-    // Load last connected instance on startup
-    const savedInstances = localStorage.getItem('proxmox-instances');
-    if (savedInstances) {
+    const savedConfig = localStorage.getItem('proxmox-connection-config');
+    if (savedConfig) {
       try {
-        const instances = JSON.parse(savedInstances);
-        const connectedInstance = instances.find((inst: ProxmoxInstance) => inst.connected);
-        if (connectedInstance) {
-          setCurrentInstance(connectedInstance);
-          setConnectionState({
-            connected: true,
-            config: {
-              host: connectedInstance.host,
-              port: connectedInstance.port,
-              username: connectedInstance.username,
-              password: connectedInstance.password,
-              realm: connectedInstance.realm,
-              ignoreSSL: connectedInstance.ignoreSSL
-            }
-          });
-          setActiveTab('dashboard');
-        }
+        const config = JSON.parse(savedConfig);
+        setCurrentConfig(config);
       } catch (error) {
-        console.error('Failed to load instances:', error);
+        console.error('Failed to parse saved config:', error);
       }
     }
-
-    const removeListener = window.electronAPI.onMenuConnect(() => {
-      setActiveTab('instances');
-    });
-
-    return () => {
-      if (removeListener && typeof removeListener === 'function') {
-        removeListener();
-      }
-    };
   }, []);
 
+  // Update active tab based on connection state
   useEffect(() => {
-    if (currentInstance && currentInstance.connected) {
-      setConnectionState({
-        connected: true,
-        config: {
-          host: currentInstance.host,
-          port: currentInstance.port,
-          username: currentInstance.username,
-          password: currentInstance.password,
-          realm: currentInstance.realm,
-          ignoreSSL: currentInstance.ignoreSSL
-        }
-      });
-    } else {
-      setConnectionState({
-        connected: false,
-        config: null
-      });
+    if (isConnected && activeTab === 'connection') {
+      setActiveTab('dashboard');
+    } else if (!isConnected && activeTab !== 'connection' && activeTab !== 'settings') {
+      setActiveTab('connection');
     }
-  }, [currentInstance]);
+  }, [isConnected, activeTab]);
 
-  const navigationSections = [
+  // Handle connection change from ConnectionManager
+  const handleConnectionChange = async (connected: boolean, config?: ConnectionConfig) => {
+    setIsConnected(connected);
+    if (connected && config) {
+      setCurrentConfig(config);
+      setConnectionError(null);
+      // Fetch initial data
+      try {
+        await Promise.all([fetchNodes(), fetchClusterResources()]);
+      } catch (error) {
+        console.error('Failed to fetch initial data:', error);
+        addError('Failed to fetch initial data');
+      }
+    } else {
+      setCurrentConfig(null);
+      setConnectionError(null);
+    }
+  };
+
+  // Simple connect function for ConnectionManager
+  const connect = async (config: ConnectionConfig) => {
+    setIsConnecting(true);
+    setConnectionError(null);
+    
+    try {
+      const result = await window.electronAPI.connect(config);
+      
+      if (result.success) {
+        setIsConnected(true);
+        setCurrentConfig(config);
+        return { success: true };
+      } else {
+        setConnectionError(result.error || 'Connection failed');
+        addError(result.error || 'Connection failed');
+        return { success: false, error: result.error };
+      }
+    } catch (error) {
+      const errorMessage = (error as Error).message;
+      setConnectionError(errorMessage);
+      addError(errorMessage);
+      return { success: false, error: errorMessage };
+    } finally {
+      setIsConnecting(false);
+    }
+  };
+
+  // Simple disconnect function
+  const disconnect = async () => {
+    try {
+      await window.electronAPI.disconnect();
+    } catch (error) {
+      console.error('Error during disconnect:', error);
+    } finally {
+      setIsConnected(false);
+      setIsConnecting(false);
+      setConnectionError(null);
+      setCurrentConfig(null);
+    }
+  };
+
+  const navigationSections: NavigationSection[] = [
+    {
+      name: 'Connection',
+      items: [
+        { 
+          id: 'connection', 
+          label: 'Connection', 
+          icon: isConnected ? Wifi : WifiOff, 
+          description: isConnected ? 'Connected' : 'Not connected',
+          color: isConnected ? 'text-green-600' : 'text-red-600'
+        }
+      ]
+    },
     {
       name: 'Overview',
       items: [
-        { 
-          id: 'instances', 
-          label: 'Instances', 
-          icon: Layers, 
-          description: 'Manage Proxmox connections'
-        },
         { 
           id: 'dashboard', 
           label: 'Dashboard', 
@@ -251,64 +283,16 @@ const AppContent: React.FC = () => {
     }
   ];
 
-  const openVMHardware = (vmId: number, nodeId: string) => {
-    setShowVMHardware({ vmId, nodeId });
-  };
-
-  const openVMConsole = (vmId: number, nodeId: string, vmName: string) => {
-    setShowVMConsole({ vmId, nodeId, vmName });
-  };
-
   const renderContent = () => {
-    // Only show connection prompt for tabs that require connection
-    if (activeTab !== 'instances' && activeTab !== 'settings' && !currentInstance?.connected) {
-      return (
-        <div className="flex items-center justify-center min-h-screen bg-gray-50 dark:bg-gray-900">
-          <div className="text-center">
-            <div className="max-w-lg p-8 mx-auto bg-white border shadow-lg rounded-2xl dark:bg-gray-800 dark:border-gray-700">
-              <div className="mb-6">
-                <div className="flex items-center justify-center w-16 h-16 mx-auto mb-4 bg-blue-100 rounded-full dark:bg-blue-900">
-                  <Cloud className="w-8 h-8 text-blue-600 dark:text-blue-400" />
-                </div>
-                <h2 className="mb-2 text-xl font-bold text-gray-900 dark:text-white">
-                  No Active Connection
-                </h2>
-                <p className="mb-6 text-gray-600 dark:text-gray-400">
-                  Connect to a Proxmox cluster to access management features.
-                </p>
-              </div>
-              <button
-                onClick={() => setActiveTab('instances')}
-                className="btn-primary"
-              >
-                <Layers className="inline w-4 h-4 mr-2" />
-                Connect to Proxmox
-              </button>
-            </div>
-          </div>
-        </div>
-      );
-    }
-
     switch (activeTab) {
-      case 'instances':
-        return (
-          <InstanceManager 
-            currentInstance={currentInstance} 
-            setCurrentInstance={setCurrentInstance} 
-          />
-        );
+      case 'connection':
+        return <ConnectionManager onConnectionChange={handleConnectionChange} />;
       case 'dashboard':
         return <Dashboard />;
       case 'nodes':
         return <NodeManager />;
       case 'vms':
-        return (
-          <VMManager 
-            onOpenHardware={openVMHardware}
-            onOpenConsole={openVMConsole}
-          />
-        );
+        return <VMManager />;
       case 'containers':
         return <ContainerManager />;
       case 'storage':
@@ -322,14 +306,9 @@ const AppContent: React.FC = () => {
       case 'users':
         return <UserManager />;
       case 'settings':
-        return (
-          <SettingsComponent 
-            connection={connectionState}
-            setConnection={setConnectionState}
-          />
-        );
+        return <SettingsComponent connection={{ connected: isConnected, config: currentConfig }} setConnection={() => {}} />;
       default:
-        return <InstanceManager currentInstance={currentInstance} setCurrentInstance={setCurrentInstance} />;
+        return <ConnectionManager onConnectionChange={handleConnectionChange} />;
     }
   };
 
@@ -377,19 +356,72 @@ const AppContent: React.FC = () => {
         </div>
 
         {/* Connection Status */}
-        {currentInstance?.connected && !sidebarCollapsed && (
-          <div className="p-4 border-b border-gray-200 dark:border-gray-700">
+        <div className="p-4 border-b border-gray-200 dark:border-gray-700">
+          {isConnected && currentConfig ? (
             <div className="p-3 border border-green-200 rounded-lg bg-green-50 dark:bg-green-900/20 dark:border-green-800">
               <div className="flex items-center space-x-2">
                 <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium text-green-800 truncate dark:text-green-400">
-                    {currentInstance.name}
+                {!sidebarCollapsed && (
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-green-800 truncate dark:text-green-400">
+                      Connected
+                    </p>
+                    <p className="text-xs text-green-600 truncate dark:text-green-500">
+                      {currentConfig.host}:{currentConfig.port}
+                    </p>
+                  </div>
+                )}
+              </div>
+            </div>
+          ) : isConnecting ? (
+            <div className="p-3 border border-blue-200 rounded-lg bg-blue-50 dark:bg-blue-900/20 dark:border-blue-800">
+              <div className="flex items-center space-x-2">
+                <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse"></div>
+                {!sidebarCollapsed && (
+                  <p className="text-sm font-medium text-blue-800 dark:text-blue-400">
+                    Connecting...
                   </p>
-                  <p className="text-xs text-green-600 truncate dark:text-green-500">
-                    {currentInstance.host}:{currentInstance.port}
+                )}
+              </div>
+            </div>
+          ) : (
+            <div className="p-3 border border-gray-200 rounded-lg bg-gray-50 dark:bg-gray-900/20 dark:border-gray-700">
+              <div className="flex items-center space-x-2">
+                <div className="w-2 h-2 bg-gray-400 rounded-full"></div>
+                {!sidebarCollapsed && (
+                  <p className="text-sm font-medium text-gray-600 dark:text-gray-400">
+                    Not Connected
                   </p>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Error Display */}
+        {errors.length > 0 && !sidebarCollapsed && (
+          <div className="p-4 border-b border-gray-200 dark:border-gray-700">
+            <div className="p-3 border border-red-200 rounded-lg bg-red-50 dark:bg-red-900/20 dark:border-red-800">
+              <div className="flex items-start justify-between">
+                <div className="flex items-start space-x-2">
+                  <AlertTriangle className="w-4 h-4 text-red-600 dark:text-red-400 mt-0.5 flex-shrink-0" />
+                  <div>
+                    <p className="text-sm font-medium text-red-800 dark:text-red-300">
+                      {errors[0]}
+                    </p>
+                    {errors.length > 1 && (
+                      <p className="mt-1 text-xs text-red-600 dark:text-red-400">
+                        +{errors.length - 1} more errors
+                      </p>
+                    )}
+                  </div>
                 </div>
+                <button
+                  onClick={clearErrors}
+                  className="text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-200"
+                >
+                  <X className="w-4 h-4" />
+                </button>
               </div>
             </div>
           </div>
@@ -407,7 +439,7 @@ const AppContent: React.FC = () => {
               <div className="space-y-1">
                 {section.items.map((item) => {
                   const Icon = item.icon;
-                  const isDisabled = item.requiresConnection && !currentInstance?.connected;
+                  const isDisabled = item.requiresConnection && !isConnected;
                   const isActive = activeTab === item.id;
                   
                   return (
@@ -428,7 +460,7 @@ const AppContent: React.FC = () => {
                       }`}
                       title={sidebarCollapsed ? item.label : undefined}
                     >
-                      <Icon className="flex-shrink-0 w-5 h-5" />
+                      <Icon className={`flex-shrink-0 w-5 h-5 ${item.color || ''}`} />
                       {!sidebarCollapsed && (
                         <div className="ml-3 text-left">
                           <span className="text-sm font-medium">{item.label}</span>
@@ -461,6 +493,11 @@ const AppContent: React.FC = () => {
               <p className="text-xs text-gray-500 dark:text-gray-400">
                 ProxTop v1.0.0
               </p>
+              {currentConfig && (
+                <p className="mt-1 text-xs text-gray-400 dark:text-gray-500">
+                  {currentConfig.username}@{currentConfig.realm}
+                </p>
+              )}
             </div>
           </div>
         )}
@@ -470,30 +507,6 @@ const AppContent: React.FC = () => {
       <div className="flex-1 overflow-hidden">
         {renderContent()}
       </div>
-
-      {/* Modals */}
-      {showVMHardware && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50">
-          <div className="w-full max-w-4xl">
-            <VMHardwareManager
-              vmId={showVMHardware.vmId}
-              nodeId={showVMHardware.nodeId}
-              onClose={() => setShowVMHardware(null)}
-            />
-          </div>
-        </div>
-      )}
-
-      {showVMConsole && (
-        <div className="fixed inset-0 z-50">
-          <NoVNCConsole
-            vmId={showVMConsole.vmId}
-            nodeId={showVMConsole.nodeId}
-            vmName={showVMConsole.vmName}
-            onClose={() => setShowVMConsole(null)}
-          />
-        </div>
-      )}
     </div>
   );
 };

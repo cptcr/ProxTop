@@ -12,10 +12,11 @@
     "build:watch": "concurrently \"npm run build:main:watch\" \"npm run build:renderer:watch\"",
     "build:main:watch": "tsc -p tsconfig.main.json --watch",
     "build:renderer:watch": "next dev",
-    "electron:dev": "wait-on dist/main/main.js && electron .",
+    "electron:dev": "wait-on dist/main/main.js && electron . --disable-gpu-sandbox --disable-software-rasterizer",
     "electron:pack": "electron-builder",
     "preelectron:pack": "npm run build",
-    "start": "electron .",
+    "start": "electron . --disable-gpu-sandbox --disable-software-rasterizer --disable-gpu-process-crash-limit",
+    "start:safe": "electron . --disable-hardware-acceleration --disable-gpu",
     "dist": "npm run build && electron-builder"
   },
   "dependencies": {

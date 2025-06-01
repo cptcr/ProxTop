@@ -1,4 +1,4 @@
-// src/renderer/components/Dashboard.tsx - Clean minimalistic dashboard with real data only
+// src/renderer/components/Dashboard.tsx - Fixed with proper types
 import React, { useEffect, useState, useCallback } from 'react';
 import { 
   Activity, 
@@ -28,6 +28,7 @@ import {
   ResponsiveContainer
 } from 'recharts';
 import { useProxmox } from '../hooks/useProxmox';
+import { ProxmoxNode, ClusterResource } from '../types/proxmox';
 
 interface ClusterStats {
   totalNodes: number;
@@ -110,32 +111,32 @@ const Dashboard: React.FC = () => {
   useEffect(() => {
     if (nodes.length === 0 || clusterResources.length === 0) return;
 
-    const vms = clusterResources.filter(r => r.type === 'vm');
-    const containers = clusterResources.filter(r => r.type === 'lxc');
-    const onlineNodes = nodes.filter(n => n.status === 'online');
+    const vms = clusterResources.filter((r: ClusterResource) => r.type === 'vm');
+    const containers = clusterResources.filter((r: ClusterResource) => r.type === 'lxc');
+    const onlineNodes = nodes.filter((n: ProxmoxNode) => n.status === 'online');
 
     const stats: ClusterStats = {
       totalNodes: nodes.length,
       onlineNodes: onlineNodes.length,
       totalVMs: vms.length,
-      runningVMs: vms.filter(vm => vm.status === 'running').length,
+      runningVMs: vms.filter((vm: ClusterResource) => vm.status === 'running').length,
       totalContainers: containers.length,
-      runningContainers: containers.filter(ct => ct.status === 'running').length,
-      totalMemory: nodes.reduce((sum, node) => sum + (node.maxmem || 0), 0),
-      usedMemory: nodes.reduce((sum, node) => sum + (node.mem || 0), 0),
-      totalStorage: nodes.reduce((sum, node) => sum + (node.maxdisk || 0), 0),
-      usedStorage: nodes.reduce((sum, node) => sum + (node.disk || 0), 0),
+      runningContainers: containers.filter((ct: ClusterResource) => ct.status === 'running').length,
+      totalMemory: nodes.reduce((sum: number, node: ProxmoxNode) => sum + (node.maxmem || 0), 0),
+      usedMemory: nodes.reduce((sum: number, node: ProxmoxNode) => sum + (node.mem || 0), 0),
+      totalStorage: nodes.reduce((sum: number, node: ProxmoxNode) => sum + (node.maxdisk || 0), 0),
+      usedStorage: nodes.reduce((sum: number, node: ProxmoxNode) => sum + (node.disk || 0), 0),
       averageCPU: nodes.length > 0 
-        ? nodes.reduce((sum, node) => sum + ((node.cpu || 0) * 100), 0) / nodes.length 
+        ? nodes.reduce((sum: number, node: ProxmoxNode) => sum + ((node.cpu || 0) * 100), 0) / nodes.length 
         : 0
     };
 
     setClusterStats(stats);
 
     // Create node metrics for charts
-    const metrics: NodeMetrics[] = nodes.map(node => {
-      const nodeVMs = vms.filter(vm => vm.node === node.node);
-      const nodeContainers = containers.filter(ct => ct.node === node.node);
+    const metrics: NodeMetrics[] = nodes.map((node: ProxmoxNode) => {
+      const nodeVMs = vms.filter((vm: ClusterResource) => vm.node === node.node);
+      const nodeContainers = containers.filter((ct: ClusterResource) => ct.node === node.node);
 
       return {
         timestamp: Date.now(),
@@ -411,7 +412,7 @@ const Dashboard: React.FC = () => {
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200 dark:bg-gray-900 dark:divide-gray-700">
-              {nodeMetrics.map((node) => (
+              {nodeMetrics.map((node: NodeMetrics) => (
                 <tr key={node.node} className="hover:bg-gray-50 dark:hover:bg-gray-800">
                   <td className="px-6 py-4 text-sm font-medium text-gray-900 whitespace-nowrap dark:text-white">
                     {node.node}

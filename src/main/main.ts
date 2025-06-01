@@ -1,19 +1,54 @@
-// src/main/main.ts
+// src/main/main.ts - Fixed with GPU error handling
 import { app, BrowserWindow, ipcMain, Menu } from 'electron';
 import * as path from 'path';
 import { ProxmoxAPI } from './api/proxmox';
+
+// Fix GPU process crashes
+app.commandLine.appendSwitch('--disable-gpu-sandbox');
+app.commandLine.appendSwitch('--disable-software-rasterizer');
+app.commandLine.appendSwitch('--disable-gpu-process-crash-limit');
+
+// Alternative: Disable hardware acceleration entirely (if the above doesn't work)
+// app.disableHardwareAcceleration();
 
 class ProxmoxDesktopApp {
   private mainWindow: BrowserWindow | null = null;
   private proxmoxAPI: ProxmoxAPI | null = null;
 
   constructor() {
-    app.whenReady().then(() => this.createWindow());
-    app.on('window-all-closed', () => {
-      if (process.platform !== 'darwin') app.quit();
+    // Handle app ready event
+    app.whenReady().then(() => {
+      this.createWindow();
+      
+      // Handle app activation (macOS)
+      app.on('activate', () => {
+        if (BrowserWindow.getAllWindows().length === 0) {
+          this.createWindow();
+        }
+      });
     });
-    app.on('activate', () => {
-      if (BrowserWindow.getAllWindows().length === 0) this.createWindow();
+
+    // Handle window close events
+    app.on('window-all-closed', () => {
+      // On macOS, keep app running even when all windows are closed
+      if (process.platform !== 'darwin') {
+        app.quit();
+      }
+    });
+
+    // Handle GPU process crashes
+    app.on('gpu-process-crashed', (event, killed) => {
+      console.log('GPU process crashed, killed:', killed);
+      // Optionally restart the window or show a message
+    });
+
+    // Handle renderer process crashes
+    app.on('render-process-gone', (event, webContents, details) => {
+      console.log('Renderer process gone:', details.reason);
+      // Optionally restart the window
+      if (this.mainWindow && this.mainWindow.webContents === webContents) {
+        this.createWindow();
+      }
     });
 
     this.setupIPC();
@@ -29,22 +64,71 @@ class ProxmoxDesktopApp {
         nodeIntegration: false,
         contextIsolation: true,
         preload: path.join(__dirname, 'preload.js'),
+        // Additional GPU-related settings
+        webSecurity: true,
+        allowRunningInsecureContent: false,
+        experimentalFeatures: false,
       },
-      titleBarStyle: 'hiddenInset',
+      // Window styling
+      titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
       show: false,
+      icon: process.platform === 'win32' ? path.join(__dirname, '../../assets/icon.ico') : undefined,
     });
 
+    // Load the app
     const isDev = process.env.NODE_ENV === 'development';
     
     if (isDev) {
-      this.mainWindow.loadURL('http://localhost:8080');
+      this.mainWindow.loadURL('http://localhost:3000');
+      // Open DevTools in development
       this.mainWindow.webContents.openDevTools();
     } else {
-      this.mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'));
+      // In production, load the built files
+      this.mainWindow.loadFile(path.join(__dirname, '../out/index.html'));
     }
 
+    // Show window when ready
     this.mainWindow.once('ready-to-show', () => {
       this.mainWindow?.show();
+      
+      // Focus the window
+      if (isDev) {
+        this.mainWindow?.focus();
+      }
+    });
+
+    // Handle window closed
+    this.mainWindow.on('closed', () => {
+      this.mainWindow = null;
+    });
+
+    // Handle web contents crashes
+    this.mainWindow.webContents.on('render-process-gone', (event, details) => {
+      console.error('Renderer process crashed:', details);
+      
+      // Show error dialog and optionally restart
+      const { dialog } = require('electron');
+      dialog.showErrorBox(
+        'Application Error',
+        `The application has crashed (${details.reason}). Please restart the application.`
+      );
+    });
+
+    // Handle unresponsive window
+    this.mainWindow.on('unresponsive', () => {
+      console.warn('Window became unresponsive');
+      
+      const { dialog } = require('electron');
+      const result = dialog.showMessageBoxSync(this.mainWindow!, {
+        type: 'warning',
+        buttons: ['Wait', 'Restart'],
+        defaultId: 0,
+        message: 'The application is not responding. Would you like to restart it?'
+      });
+      
+      if (result === 1) {
+        this.mainWindow?.reload();
+      }
     });
 
     this.createMenu();
@@ -61,7 +145,11 @@ class ProxmoxDesktopApp {
             click: () => this.mainWindow?.webContents.send('menu-connect'),
           },
           { type: 'separator' },
-          { role: 'quit' },
+          { 
+            label: 'Quit',
+            accelerator: process.platform === 'darwin' ? 'Cmd+Q' : 'Ctrl+Q',
+            click: () => app.quit()
+          },
         ],
       },
       {
@@ -78,6 +166,41 @@ class ProxmoxDesktopApp {
           { role: 'togglefullscreen' },
         ],
       },
+      {
+        label: 'Window',
+        submenu: [
+          { role: 'minimize' },
+          { role: 'close' },
+          ...(process.platform === 'darwin' ? [
+            { type: 'separator' },
+            { role: 'front' }
+          ] : [])
+        ],
+      },
+      {
+        label: 'Help',
+        submenu: [
+          {
+            label: 'About ProxTop',
+            click: () => {
+              const { dialog } = require('electron');
+              dialog.showMessageBox(this.mainWindow!, {
+                type: 'info',
+                title: 'About ProxTop',
+                message: 'ProxTop v1.0.0',
+                detail: 'A modern desktop application for managing Proxmox VE clusters.'
+              });
+            }
+          },
+          {
+            label: 'Restart Application',
+            click: () => {
+              app.relaunch();
+              app.exit();
+            }
+          }
+        ],
+      },
     ];
 
     const menu = Menu.buildFromTemplate(template as any);
@@ -92,6 +215,7 @@ class ProxmoxDesktopApp {
         await this.proxmoxAPI.authenticate();
         return { success: true };
       } catch (error) {
+        console.error('Connection failed:', error);
         return { success: false, error: (error as Error).message };
       }
     });
@@ -664,5 +788,17 @@ class ProxmoxDesktopApp {
     });
   }
 }
+
+// Handle uncaught exceptions
+process.on('uncaughtException', (error) => {
+  console.error('Uncaught Exception:', error);
+  // Optionally show error dialog
+  const { dialog } = require('electron');
+  dialog.showErrorBox('Unexpected Error', error.message);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+});
 
 new ProxmoxDesktopApp();
