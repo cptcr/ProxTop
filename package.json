@@ -1,0 +1,64 @@
+{
+  "name": "proxmox-desktop-manager",
+  "version": "1.0.0",
+  "description": "Desktop application for managing Proxmox VE clusters",
+  "main": "dist/main/main.js",
+  "homepage": "./",
+  "scripts": {
+    "start": "concurrently \"npm run build:watch\" \"npm run electron:dev\"",
+    "build": "npm run build:main && npm run build:renderer",
+    "build:main": "tsc -p tsconfig.main.json",
+    "build:renderer": "webpack --mode production",
+    "build:watch": "concurrently \"npm run build:main:watch\" \"npm run build:renderer:watch\"",
+    "build:main:watch": "tsc -p tsconfig.main.json --watch",
+    "build:renderer:watch": "webpack --mode development --watch",
+    "electron:dev": "wait-on dist/main/main.js && electron .",
+    "electron:pack": "electron-builder",
+    "preelectron:pack": "npm run build"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/react": "^18.2.0",
+    "@types/react-dom": "^18.2.0",
+    "autoprefixer": "^10.4.0",
+    "concurrently": "^8.2.0",
+    "css-loader": "^6.8.0",
+    "electron": "^25.0.0",
+    "electron-builder": "^24.0.0",
+    "html-webpack-plugin": "^5.5.0",
+    "postcss": "^8.4.0",
+    "postcss-loader": "^7.3.0",
+    "style-loader": "^3.3.0",
+    "tailwindcss": "^3.3.0",
+    "ts-loader": "^9.4.0",
+    "typescript": "^5.0.0",
+    "wait-on": "^7.0.0",
+    "webpack": "^5.88.0",
+    "webpack-cli": "^5.1.0"
+  },
+  "dependencies": {
+    "axios": "^1.4.0",
+    "date-fns": "^2.30.0",
+    "lucide-react": "^0.263.1",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "recharts": "^2.7.0"
+  },
+  "build": {
+    "appId": "com.proxmox.desktop.manager",
+    "productName": "Proxmox VE Manager",
+    "directories": {
+      "output": "release"
+    },
+    "files": ["dist/**/*"],
+    "mac": {
+      "category": "public.app-category.developer-tools"
+    },
+    "win": {
+      "target": "nsis"
+    },
+    "linux": {
+      "target": "AppImage"
+    }
+  }
+}
