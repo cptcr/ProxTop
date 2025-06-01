@@ -8,8 +8,13 @@ import {
   Settings,
   Box,
   Database,
-  Layers
+  Layers,
+  Users,
+  Disc,
+  Moon,
+  Sun
 } from 'lucide-react';
+import { ThemeProvider, useTheme } from './contexts/ThemeContext';
 import Dashboard from './components/Dashboard';
 import NodeManager from './components/NodeManager';
 import VMManager from './components/VMManager';
@@ -19,8 +24,12 @@ import NetworkManager from './components/NetworkManager';
 import BackupManager from './components/BackupManager';
 import SettingsComponent from './components/Settings';
 import InstanceManager from './components/InstanceManager';
+import UserManager from './components/UserManager';
+import ISOManager from './components/ISOManager';
+import VMHardwareManager from './components/VMHardwareManager';
+import NoVNCConsole from './components/NoVNCConsole';
 
-type TabType = 'dashboard' | 'nodes' | 'vms' | 'containers' | 'storage' | 'network' | 'backups' | 'instances' | 'settings';
+type TabType = 'dashboard' | 'nodes' | 'vms' | 'containers' | 'storage' | 'network' | 'backups' | 'instances' | 'settings' | 'users' | 'iso';
 
 interface ProxmoxInstance {
   id: string;
@@ -35,9 +44,44 @@ interface ProxmoxInstance {
   lastConnected?: Date;
 }
 
-const App: React.FC = () => {
+interface VMConsoleState {
+  vmId: number;
+  nodeId: string;
+  vmName: string;
+}
+
+interface VMHardwareState {
+  vmId: number;
+  nodeId: string;
+}
+
+interface ConnectionConfig {
+  host: string;
+  port: number;
+  username: string;
+  password: string;
+  realm: string;
+  ignoreSSL: boolean;
+}
+
+// Define the connection state type to match Settings component expectations
+interface ConnectionState {
+  connected: boolean;
+  config: ConnectionConfig | null;
+}
+
+const AppContent: React.FC = () => {
+  const { isDarkMode, toggleDarkMode } = useTheme();
   const [activeTab, setActiveTab] = useState<TabType>('instances');
   const [currentInstance, setCurrentInstance] = useState<ProxmoxInstance | null>(null);
+  const [showVMHardware, setShowVMHardware] = useState<VMHardwareState | null>(null);
+  const [showVMConsole, setShowVMConsole] = useState<VMConsoleState | null>(null);
+
+  // Create a connection state that matches Settings component expectations
+  const [connectionState, setConnectionState] = useState<ConnectionState>({
+    connected: false,
+    config: null
+  });
 
   useEffect(() => {
     // Load last connected instance on startup
@@ -48,6 +92,17 @@ const App: React.FC = () => {
         const connectedInstance = instances.find((inst: ProxmoxInstance) => inst.connected);
         if (connectedInstance) {
           setCurrentInstance(connectedInstance);
+          setConnectionState({
+            connected: true,
+            config: {
+              host: connectedInstance.host,
+              port: connectedInstance.port,
+              username: connectedInstance.username,
+              password: connectedInstance.password,
+              realm: connectedInstance.realm,
+              ignoreSSL: connectedInstance.ignoreSSL
+            }
+          });
           setActiveTab('dashboard');
         }
       } catch (error) {
@@ -55,12 +110,39 @@ const App: React.FC = () => {
       }
     }
 
+    // Fix the useEffect cleanup function
     const removeListener = window.electronAPI.onMenuConnect(() => {
       setActiveTab('instances');
     });
 
-    return removeListener;
+    return () => {
+      if (removeListener && typeof removeListener === 'function') {
+        removeListener();
+      }
+    };
   }, []);
+
+  // Update connection state when current instance changes
+  useEffect(() => {
+    if (currentInstance && currentInstance.connected) {
+      setConnectionState({
+        connected: true,
+        config: {
+          host: currentInstance.host,
+          port: currentInstance.port,
+          username: currentInstance.username,
+          password: currentInstance.password,
+          realm: currentInstance.realm,
+          ignoreSSL: currentInstance.ignoreSSL
+        }
+      });
+    } else {
+      setConnectionState({
+        connected: false,
+        config: null
+      });
+    }
+  }, [currentInstance]);
 
   const tabs = [
     { id: 'instances', label: 'Instances', icon: Layers },
@@ -71,19 +153,29 @@ const App: React.FC = () => {
     { id: 'storage', label: 'Storage', icon: HardDrive, requiresConnection: true },
     { id: 'network', label: 'Network', icon: Network, requiresConnection: true },
     { id: 'backups', label: 'Backups', icon: Archive, requiresConnection: true },
+    { id: 'iso', label: 'ISO Images', icon: Disc, requiresConnection: true },
+    { id: 'users', label: 'User Management', icon: Users, requiresConnection: true },
     { id: 'settings', label: 'Settings', icon: Settings },
   ];
+
+  const openVMHardware = (vmId: number, nodeId: string) => {
+    setShowVMHardware({ vmId, nodeId });
+  };
+
+  const openVMConsole = (vmId: number, nodeId: string, vmName: string) => {
+    setShowVMConsole({ vmId, nodeId, vmName });
+  };
 
   const renderContent = () => {
     if (activeTab !== 'instances' && activeTab !== 'settings' && !currentInstance?.connected) {
       return (
         <div className="flex items-center justify-center h-full">
           <div className="text-center">
-            <Layers className="mx-auto h-16 w-16 text-gray-400 mb-4" />
-            <h2 className="text-xl font-semibold text-gray-700 mb-2">
+            <Layers className="w-16 h-16 mx-auto mb-4 text-gray-400 dark:text-gray-500" />
+            <h2 className="mb-2 text-xl font-semibold text-gray-700 dark:text-gray-300">
               No Active Connection
             </h2>
-            <p className="text-gray-500 mb-4">
+            <p className="mb-4 text-gray-500 dark:text-gray-400">
               Please connect to a Proxmox instance to continue
             </p>
             <button
@@ -110,7 +202,12 @@ const App: React.FC = () => {
       case 'nodes':
         return <NodeManager />;
       case 'vms':
-        return <VMManager />;
+        return (
+          <VMManager 
+            onOpenHardware={openVMHardware}
+            onOpenConsole={openVMConsole}
+          />
+        );
       case 'containers':
         return <ContainerManager />;
       case 'storage':
@@ -119,20 +216,15 @@ const App: React.FC = () => {
         return <NetworkManager />;
       case 'backups':
         return <BackupManager />;
+      case 'iso':
+        return <ISOManager />;
+      case 'users':
+        return <UserManager />;
       case 'settings':
         return (
           <SettingsComponent 
-            connection={{
-              connected: currentInstance?.connected || false,
-              config: currentInstance || null
-            }} 
-            setConnection={(newConnection) => {
-              if (newConnection.connected && newConnection.config) {
-                setCurrentInstance(newConnection.config as ProxmoxInstance);
-              } else {
-                setCurrentInstance(null);
-              }
-            }} 
+            connection={connectionState}
+            setConnection={setConnectionState}
           />
         );
       default:
@@ -141,15 +233,28 @@ const App: React.FC = () => {
   };
 
   return (
-    <div className="flex h-screen bg-gray-100">
+    <div className="flex h-screen bg-gray-100 dark:bg-gray-900">
       {/* Sidebar */}
-      <div className="w-64 bg-white shadow-lg">
-        <div className="p-4 border-b">
-          <h1 className="text-xl font-bold text-gray-800">Proxmox VE Manager</h1>
+      <div className="w-64 bg-white shadow-lg dark:bg-gray-800">
+        <div className="p-4 border-b dark:border-gray-700">
+          <div className="flex items-center justify-between mb-2">
+            <h1 className="text-xl font-bold text-gray-800 dark:text-white">Proxmox VE Manager</h1>
+            <button
+              onClick={toggleDarkMode}
+              className="p-2 transition-colors rounded-md hover:bg-gray-100 dark:hover:bg-gray-700"
+              title={isDarkMode ? 'Switch to light mode' : 'Switch to dark mode'}
+            >
+              {isDarkMode ? (
+                <Sun className="w-5 h-5 text-yellow-500" />
+              ) : (
+                <Moon className="w-5 h-5 text-gray-600" />
+              )}
+            </button>
+          </div>
           {currentInstance?.connected && (
             <div className="mt-1">
-              <p className="text-sm text-green-600 font-medium">{currentInstance.name}</p>
-              <p className="text-xs text-gray-500">{currentInstance.host}:{currentInstance.port}</p>
+              <p className="text-sm font-medium text-green-600 dark:text-green-400">{currentInstance.name}</p>
+              <p className="text-xs text-gray-500 dark:text-gray-400">{currentInstance.host}:{currentInstance.port}</p>
             </div>
           )}
         </div>
@@ -165,13 +270,15 @@ const App: React.FC = () => {
                 disabled={isDisabled}
                 className={`w-full flex items-center px-4 py-3 text-left transition-colors ${
                   isDisabled 
-                    ? 'text-gray-400 cursor-not-allowed' 
-                    : 'hover:bg-gray-50'
+                    ? 'text-gray-400 dark:text-gray-600 cursor-not-allowed' 
+                    : 'hover:bg-gray-50 dark:hover:bg-gray-700'
                 } ${
-                  activeTab === tab.id ? 'bg-blue-50 border-r-2 border-blue-600 text-blue-700' : 'text-gray-700'
+                  activeTab === tab.id 
+                    ? 'bg-blue-50 dark:bg-blue-900/20 border-r-2 border-blue-600 text-blue-700 dark:text-blue-400' 
+                    : 'text-gray-700 dark:text-gray-300'
                 }`}
               >
-                <Icon className="h-5 w-5 mr-3" />
+                <Icon className="w-5 h-5 mr-3" />
                 {tab.label}
               </button>
             );
@@ -180,10 +287,37 @@ const App: React.FC = () => {
       </div>
 
       {/* Main Content */}
-      <div className="flex-1 overflow-hidden">
+      <div className="flex-1 overflow-hidden bg-gray-50 dark:bg-gray-900">
         {renderContent()}
       </div>
+
+      {/* VM Hardware Configuration Modal */}
+      {showVMHardware && (
+        <VMHardwareManager
+          vmId={showVMHardware.vmId}
+          nodeId={showVMHardware.nodeId}
+          onClose={() => setShowVMHardware(null)}
+        />
+      )}
+
+      {/* VM Console Modal */}
+      {showVMConsole && (
+        <NoVNCConsole
+          vmId={showVMConsole.vmId}
+          nodeId={showVMConsole.nodeId}
+          vmName={showVMConsole.vmName}
+          onClose={() => setShowVMConsole(null)}
+        />
+      )}
     </div>
+  );
+};
+
+const App: React.FC = () => {
+  return (
+    <ThemeProvider>
+      <AppContent />
+    </ThemeProvider>
   );
 };
 
