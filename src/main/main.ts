@@ -1,19 +1,30 @@
-// src/main/main.ts - Fixed with GPU error handling
+// src/main/main.ts - Enhanced GPU error handling and fallbacks
 import { app, BrowserWindow, ipcMain, Menu } from 'electron';
 import * as path from 'path';
 import { ProxmoxAPI } from './api/proxmox';
 
-// Fix GPU process crashes
+// Enhanced GPU crash prevention
+app.commandLine.appendSwitch('--disable-gpu');
 app.commandLine.appendSwitch('--disable-gpu-sandbox');
 app.commandLine.appendSwitch('--disable-software-rasterizer');
 app.commandLine.appendSwitch('--disable-gpu-process-crash-limit');
+app.commandLine.appendSwitch('--disable-gpu-blacklist');
+app.commandLine.appendSwitch('--disable-accelerated-2d-canvas');
+app.commandLine.appendSwitch('--disable-accelerated-jpeg-decoding');
+app.commandLine.appendSwitch('--disable-accelerated-mjpeg-decode');
+app.commandLine.appendSwitch('--disable-accelerated-video-decode');
+app.commandLine.appendSwitch('--disable-accelerated-video-encode');
+app.commandLine.appendSwitch('--disable-background-timer-throttling');
+app.commandLine.appendSwitch('--disable-backgrounding-occluded-windows');
+app.commandLine.appendSwitch('--disable-features', 'VizDisplayCompositor');
 
-// Alternative: Disable hardware acceleration entirely (if the above doesn't work)
-// app.disableHardwareAcceleration();
+// Disable hardware acceleration entirely for stability
+app.disableHardwareAcceleration();
 
 class ProxmoxDesktopApp {
   private mainWindow: BrowserWindow | null = null;
   private proxmoxAPI: ProxmoxAPI | null = null;
+  private isQuitting = false;
 
   constructor() {
     // Handle app ready event
@@ -32,29 +43,56 @@ class ProxmoxDesktopApp {
     app.on('window-all-closed', () => {
       // On macOS, keep app running even when all windows are closed
       if (process.platform !== 'darwin') {
+        this.isQuitting = true;
         app.quit();
       }
     });
 
-    // Handle GPU process crashes
+    app.on('before-quit', () => {
+      this.isQuitting = true;
+    });
+
+    // Enhanced GPU process crash handling
     app.on('gpu-process-crashed', (event, killed) => {
       console.log('GPU process crashed, killed:', killed);
-      // Optionally restart the window or show a message
+      console.log('Attempting to recover...');
+      
+      if (!this.isQuitting) {
+        // Try to recreate the window with software rendering
+        if (this.mainWindow) {
+          this.mainWindow.destroy();
+        }
+        
+        setTimeout(() => {
+          this.createWindow();
+        }, 1000);
+      }
     });
 
     // Handle renderer process crashes
     app.on('render-process-gone', (event, webContents, details) => {
       console.log('Renderer process gone:', details.reason);
-      // Optionally restart the window
-      if (this.mainWindow && this.mainWindow.webContents === webContents) {
+      
+      if (!this.isQuitting && this.mainWindow && this.mainWindow.webContents === webContents) {
+        console.log('Attempting to recover renderer process...');
         this.createWindow();
       }
+    });
+
+    // Handle child process crashes
+    app.on('child-process-gone', (event, details) => {
+      console.log('Child process gone:', details.type, details.reason);
     });
 
     this.setupIPC();
   }
 
   private createWindow(): void {
+    // Destroy existing window if it exists
+    if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+      this.mainWindow.destroy();
+    }
+
     this.mainWindow = new BrowserWindow({
       width: 1400,
       height: 900,
@@ -64,36 +102,54 @@ class ProxmoxDesktopApp {
         nodeIntegration: false,
         contextIsolation: true,
         preload: path.join(__dirname, 'preload.js'),
-        // Additional GPU-related settings
+        // Enhanced stability settings
         webSecurity: true,
         allowRunningInsecureContent: false,
         experimentalFeatures: false,
+        // Disable GPU features in renderer
+        enableBlinkFeatures: '',
+        disableBlinkFeatures: 'Accelerated2dCanvas,AcceleratedSmallCanvases',
+        // Memory and performance settings
+        backgroundThrottling: false,
+        offscreen: false,
       },
       // Window styling
       titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
       show: false,
       icon: process.platform === 'win32' ? path.join(__dirname, '../../assets/icon.ico') : undefined,
+      // Additional stability options
+      autoHideMenuBar: false,
+      resizable: true,
+      maximizable: true,
+      minimizable: true,
+      closable: true,
     });
 
     // Load the app
     const isDev = process.env.NODE_ENV === 'development';
     
     if (isDev) {
-      this.mainWindow.loadURL('http://localhost:3000');
+      this.mainWindow.loadURL('http://localhost:3000').catch(err => {
+        console.error('Failed to load dev URL:', err);
+        // Fallback to built files
+        this.loadBuiltFiles();
+      });
+      
       // Open DevTools in development
       this.mainWindow.webContents.openDevTools();
     } else {
-      // In production, load the built files
-      this.mainWindow.loadFile(path.join(__dirname, '../out/index.html'));
+      this.loadBuiltFiles();
     }
 
     // Show window when ready
     this.mainWindow.once('ready-to-show', () => {
-      this.mainWindow?.show();
-      
-      // Focus the window
-      if (isDev) {
-        this.mainWindow?.focus();
+      if (!this.isQuitting && this.mainWindow && !this.mainWindow.isDestroyed()) {
+        this.mainWindow.show();
+        
+        // Focus the window
+        if (isDev) {
+          this.mainWindow.focus();
+        }
       }
     });
 
@@ -102,36 +158,121 @@ class ProxmoxDesktopApp {
       this.mainWindow = null;
     });
 
-    // Handle web contents crashes
+    // Enhanced crash handling for web contents
     this.mainWindow.webContents.on('render-process-gone', (event, details) => {
       console.error('Renderer process crashed:', details);
       
-      // Show error dialog and optionally restart
-      const { dialog } = require('electron');
-      dialog.showErrorBox(
-        'Application Error',
-        `The application has crashed (${details.reason}). Please restart the application.`
-      );
+      if (!this.isQuitting) {
+        const { dialog } = require('electron');
+        const result = dialog.showMessageBoxSync(this.mainWindow!, {
+          type: 'error',
+          buttons: ['Restart', 'Close'],
+          defaultId: 0,
+          title: 'Application Crashed',
+          message: 'The application has crashed. Would you like to restart it?',
+          detail: `Reason: ${details.reason}\nExit Code: ${details.exitCode}`
+        });
+        
+        if (result === 0) {
+          this.createWindow();
+        } else {
+          app.quit();
+        }
+      }
     });
 
     // Handle unresponsive window
     this.mainWindow.on('unresponsive', () => {
       console.warn('Window became unresponsive');
       
-      const { dialog } = require('electron');
-      const result = dialog.showMessageBoxSync(this.mainWindow!, {
-        type: 'warning',
-        buttons: ['Wait', 'Restart'],
-        defaultId: 0,
-        message: 'The application is not responding. Would you like to restart it?'
-      });
+      if (!this.isQuitting) {
+        const { dialog } = require('electron');
+        const result = dialog.showMessageBoxSync(this.mainWindow!, {
+          type: 'warning',
+          buttons: ['Wait', 'Restart'],
+          defaultId: 0,
+          title: 'Application Not Responding',
+          message: 'The application is not responding. Would you like to restart it?'
+        });
+        
+        if (result === 1) {
+          this.createWindow();
+        }
+      }
+    });
+
+    // Handle navigation errors
+    this.mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL) => {
+      console.error('Failed to load:', errorCode, errorDescription, validatedURL);
       
-      if (result === 1) {
-        this.mainWindow?.reload();
+      if (!this.isQuitting && errorCode !== -3) { // -3 is user abort
+        setTimeout(() => {
+          if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+            this.mainWindow.reload();
+          }
+        }, 2000);
       }
     });
 
     this.createMenu();
+  }
+
+  private loadBuiltFiles(): void {
+    const builtPath = path.join(__dirname, '../out/index.html');
+    console.log('Attempting to load built files from:', builtPath);
+    this.mainWindow?.loadFile(builtPath).catch(err => {
+      console.error('Failed to load built files:', err);
+      
+      // Show error page
+      const errorHtml = `
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>ProxTop - Error</title>
+            <style>
+                body { 
+                    font-family: Arial, sans-serif; 
+                    text-align: center; 
+                    padding: 50px;
+                    background: #f5f5f5;
+                    color: #333;
+                }
+                .error-container {
+                    background: white;
+                    border-radius: 8px;
+                    padding: 40px;
+                    box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+                    max-width: 500px;
+                    margin: 0 auto;
+                }
+                .error-title { color: #d32f2f; margin-bottom: 20px; }
+                .error-message { margin-bottom: 30px; line-height: 1.6; }
+                .retry-button {
+                    background: #1976d2;
+                    color: white;
+                    border: none;
+                    padding: 12px 24px;
+                    border-radius: 4px;
+                    cursor: pointer;
+                    font-size: 16px;
+                }
+                .retry-button:hover { background: #1565c0; }
+            </style>
+        </head>
+        <body>
+            <div class="error-container">
+                <h1 class="error-title">ProxTop Failed to Load</h1>
+                <p class="error-message">
+                    The application failed to load properly. This might be due to missing files or a build issue.
+                </p>
+                <button class="retry-button" onclick="location.reload()">Retry</button>
+            </div>
+        </body>
+        </html>
+      `;
+      
+      this.mainWindow?.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(errorHtml)}`);
+    });
   }
 
   private createMenu(): void {
@@ -148,7 +289,10 @@ class ProxmoxDesktopApp {
           { 
             label: 'Quit',
             accelerator: process.platform === 'darwin' ? 'Cmd+Q' : 'Ctrl+Q',
-            click: () => app.quit()
+            click: () => {
+              this.isQuitting = true;
+              app.quit();
+            }
           },
         ],
       },
@@ -188,14 +332,25 @@ class ProxmoxDesktopApp {
                 type: 'info',
                 title: 'About ProxTop',
                 message: 'ProxTop v1.0.0',
-                detail: 'A modern desktop application for managing Proxmox VE clusters.'
+                detail: 'A modern desktop application for managing Proxmox VE clusters.\n\nBuilt with Electron, React, and TypeScript.'
               });
             }
           },
           {
             label: 'Restart Application',
             click: () => {
+              this.isQuitting = true;
               app.relaunch();
+              app.exit();
+            }
+          },
+          {
+            label: 'Safe Mode (Software Rendering)',
+            click: () => {
+              this.isQuitting = true;
+              app.relaunch({
+                args: process.argv.slice(1).concat(['--disable-hardware-acceleration', '--disable-gpu'])
+              });
               app.exit();
             }
           }
@@ -789,16 +944,34 @@ class ProxmoxDesktopApp {
   }
 }
 
-// Handle uncaught exceptions
+// Enhanced uncaught exception handling
 process.on('uncaughtException', (error) => {
   console.error('Uncaught Exception:', error);
-  // Optionally show error dialog
+  
   const { dialog } = require('electron');
-  dialog.showErrorBox('Unexpected Error', error.message);
+  try {
+    dialog.showErrorBox(
+      'Unexpected Error', 
+      `An unexpected error occurred: ${error.message}\n\nThe application may be unstable. Please restart if you experience issues.`
+    );
+  } catch (dialogError) {
+    console.error('Failed to show error dialog:', dialogError);
+  }
 });
 
 process.on('unhandledRejection', (reason, promise) => {
   console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+});
+
+// Graceful shutdown
+process.on('SIGTERM', () => {
+  console.log('SIGTERM received, shutting down gracefully');
+  app.quit();
+});
+
+process.on('SIGINT', () => {
+  console.log('SIGINT received, shutting down gracefully');
+  app.quit();
 });
 
 new ProxmoxDesktopApp();

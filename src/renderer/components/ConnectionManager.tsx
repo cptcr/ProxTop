@@ -1,390 +1,365 @@
-
-import React, { useEffect, useState, useCallback } from 'react';
+// src/renderer/components/ConnectionManager.tsx - Fixed connection component
+import React, { useState, useEffect } from 'react';
 import { 
-  Database, 
-  Play, 
-  Square, 
-  RotateCcw,
-  Search,
-  Filter,
-  Settings, 
-  AlertCircle,
+  Server, 
+  Wifi, 
+  WifiOff, 
+  Eye, 
+  EyeOff, 
+  TestTube, 
+  Save, 
+  AlertCircle, 
   CheckCircle2,
-  Pause,
-  RefreshCw,
-  Clock
+  Activity 
 } from 'lucide-react';
-import { useProxmox } from '../hooks/useProxmox';
-import { ClusterResource, ProxmoxNode } from '../types/proxmox';
 
-const ContainerManager: React.FC = () => {
-  const { 
-    nodes, 
-    clusterResources,
-    startContainer, 
-    stopContainer, 
-    loading,
-    error,
-    fetchNodes,
-    fetchClusterResources
-  } = useProxmox();
+interface ConnectionConfig {
+  host: string;
+  port: number;
+  username: string;
+  password: string;
+  realm: string;
+  ignoreSSL: boolean;
+}
+
+interface ConnectionManagerProps {
+  onConnectionChange: (connected: boolean, config?: ConnectionConfig) => void;
+}
+
+const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onConnectionChange }) => {
+  const [config, setConfig] = useState<ConnectionConfig>({
+    host: '',
+    port: 8006,
+    username: 'root',
+    password: '',
+    realm: 'pam',
+    ignoreSSL: true,
+  });
   
-  const [selectedNode, setSelectedNode] = useState<string>('');
-  const [actionLoading, setActionLoading] = useState<{ [key: string]: string }>({});
-  const [searchTerm, setSearchTerm] = useState('');
-  const [statusFilter, setStatusFilter] = useState<'all' | 'running' | 'stopped' | 'suspended'>('all');
-  const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
-
-  // Get containers from cluster resources
-  const containers = clusterResources.filter((resource: ClusterResource) => 
-    resource.type === 'lxc' && 
-    (selectedNode === '' || resource.node === selectedNode)
-  );
+  const [testing, setTesting] = useState(false);
+  const [connecting, setConnecting] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+  const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
+  const [isConnected, setIsConnected] = useState(false);
 
   useEffect(() => {
-    if (nodes.length > 0 && !selectedNode) {
-      setSelectedNode(nodes[0].node);
+    // Load saved configuration
+    const savedConfig = localStorage.getItem('proxmox-connection-config');
+    if (savedConfig) {
+      try {
+        const parsed = JSON.parse(savedConfig);
+        setConfig(parsed);
+      } catch (error) {
+        console.error('Failed to parse saved config:', error);
+      }
     }
-  }, [nodes, selectedNode]);
-
-  useEffect(() => {
-    refreshData();
-    const interval = setInterval(refreshData, 10000); // Refresh every 10 seconds
-    
-    return () => clearInterval(interval);
   }, []);
 
-  const refreshData = useCallback(async () => {
-    try {
-      await Promise.all([
-        fetchNodes(),
-        fetchClusterResources()
-      ]);
-      setLastUpdate(new Date());
-    } catch (error) {
-      console.error('Failed to refresh container data:', error);
-    }
-  }, [fetchNodes, fetchClusterResources]);
+  const handleInputChange = (field: keyof ConnectionConfig, value: string | number | boolean) => {
+    setConfig(prev => ({ ...prev, [field]: value }));
+    setTestResult(null);
+  };
 
-  const handleContainerAction = async (action: string, ctId: number, nodeId: string) => {
-    const ctKey = `${nodeId}-${ctId}`;
-    setActionLoading(prev => ({ ...prev, [ctKey]: action }));
+  const testConnection = async () => {
+    setTesting(true);
+    setTestResult(null);
 
     try {
-      switch (action) {
-        case 'start':
-          await startContainer(nodeId, ctId.toString());
-          break;
-        case 'stop':
-          await stopContainer(nodeId, ctId.toString());
-          break;
+      const result = await window.electronAPI.connect(config);
+      if (result.success) {
+        setTestResult({ success: true, message: 'Connection test successful!' });
+      } else {
+        setTestResult({ success: false, message: result.error || 'Connection test failed' });
       }
-      
-      // Refresh data after action
-      setTimeout(refreshData, 2000);
     } catch (error) {
-      console.error(`Failed to ${action} container:`, error);
+      setTestResult({ success: false, message: (error as Error).message });
     } finally {
-      setActionLoading(prev => {
-        const newState = { ...prev };
-        delete newState[ctKey];
-        return newState;
-      });
+      setTesting(false);
     }
   };
 
-  const formatBytes = (bytes: number) => {
-    if (bytes === 0) return '0 B';
-    const k = 1024;
-    const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return `${(bytes / Math.pow(k, i)).toFixed(1)} ${sizes[i]}`;
-  };
+  const saveAndConnect = async () => {
+    setConnecting(true);
+    setTestResult(null);
 
-  const formatUptime = (seconds: number) => {
-    if (!seconds) return 'Stopped';
-    const days = Math.floor(seconds / 86400);
-    const hours = Math.floor((seconds % 86400) / 3600);
-    const minutes = Math.floor((seconds % 3600) / 60);
-    return `${days}d ${hours}h ${minutes}m`;
-  };
-
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case 'running':
-        return 'status-running';
-      case 'stopped':
-        return 'status-stopped';
-      case 'suspended':
-        return 'status-paused';
-      default:
-        return 'status-unknown';
+    try {
+      const result = await window.electronAPI.connect(config);
+      if (result.success) {
+        // Save configuration
+        localStorage.setItem('proxmox-connection-config', JSON.stringify(config));
+        
+        // Update connection state
+        setIsConnected(true);
+        onConnectionChange(true, config);
+        
+        setTestResult({ success: true, message: 'Connected successfully!' });
+      } else {
+        setTestResult({ success: false, message: result.error || 'Connection failed' });
+        setIsConnected(false);
+        onConnectionChange(false);
+      }
+    } catch (error) {
+      setTestResult({ success: false, message: (error as Error).message });
+      setIsConnected(false);
+      onConnectionChange(false);
+    } finally {
+      setConnecting(false);
     }
   };
 
-  const getStatusIcon = (status: string) => {
-    switch (status) {
-      case 'running':
-        return <CheckCircle2 className="w-4 h-4" />;
-      case 'stopped':
-        return <AlertCircle className="w-4 h-4" />;
-      case 'suspended':
-        return <Pause className="w-4 h-4" />;
-      default:
-        return <AlertCircle className="w-4 h-4" />;
+  const disconnect = async () => {
+    try {
+      await window.electronAPI.disconnect();
+      setIsConnected(false);
+      onConnectionChange(false);
+      setTestResult(null);
+    } catch (error) {
+      console.error('Failed to disconnect:', error);
     }
   };
-
-  // Filter containers based on search and status
-  const filteredContainers = containers.filter((container: ClusterResource) => {
-    const matchesSearch = searchTerm === '' || 
-      container.vmid?.toString().includes(searchTerm) ||
-      container.node?.toLowerCase().includes(searchTerm.toLowerCase());
-    
-    const matchesStatus = statusFilter === 'all' || container.status === statusFilter;
-    
-    return matchesSearch && matchesStatus;
-  });
-
-  if (loading && containers.length === 0) {
-    return (
-      <div className="flex items-center justify-center min-h-screen">
-        <div className="text-center">
-          <div className="w-8 h-8 border-2 border-gray-300 rounded-full border-t-blue-600 animate-spin"></div>
-          <p className="mt-2 text-sm text-gray-600 dark:text-gray-400">Loading containers...</p>
-        </div>
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="flex items-center justify-center min-h-screen">
-        <div className="text-center">
-          <AlertCircle className="w-12 h-12 mx-auto mb-4 text-red-500" />
-          <h2 className="mb-2 text-lg font-semibold text-gray-900 dark:text-white">Error Loading Containers</h2>
-          <p className="mb-4 text-sm text-gray-600 dark:text-gray-400">{error}</p>
-          <button onClick={refreshData} className="btn-primary">
-            <RefreshCw className="w-4 h-4 mr-2" />
-            Retry
-          </button>
-        </div>
-      </div>
-    );
-  }
 
   return (
-    <div className="min-h-screen p-6 space-y-6 bg-gray-50 dark:bg-gray-900">
-      {/* Header */}
-      <div className="flex flex-col space-y-4 lg:flex-row lg:items-center lg:justify-between lg:space-y-0">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
-            LXC Containers
+    <div className="min-h-screen p-6 bg-gray-50 dark:bg-gray-900">
+      <div className="max-w-2xl mx-auto">
+        {/* Header */}
+        <div className="mb-8 text-center">
+          <div className="flex items-center justify-center w-16 h-16 mx-auto mb-4 bg-blue-600 rounded-full">
+            <Activity className="w-8 h-8 text-white" />
+          </div>
+          <h1 className="text-3xl font-bold text-gray-900 dark:text-white">
+            ProxTop
           </h1>
-          <p className="text-sm text-gray-600 dark:text-gray-400">
-            {filteredContainers.length} containers • {filteredContainers.filter((ct: ClusterResource) => ct.status === 'running').length} running
+          <p className="mt-2 text-gray-600 dark:text-gray-400">
+            Proxmox VE Desktop Manager
           </p>
         </div>
-        
-        <div className="flex items-center space-x-4">
-          {lastUpdate && (
-            <span className="text-xs text-gray-500 dark:text-gray-400">
-              Last updated: {lastUpdate.toLocaleTimeString()}
-            </span>
-          )}
-          <button onClick={refreshData} className="btn-secondary">
-            <RefreshCw className="w-4 h-4 mr-2" />
-            Refresh
-          </button>
-        </div>
-      </div>
 
-      {/* Filters */}
-      <div className="flex flex-col space-y-4 lg:flex-row lg:items-center lg:space-y-0 lg:space-x-6">
-        {/* Node Filter */}
-        <select
-          value={selectedNode}
-          onChange={(e) => setSelectedNode(e.target.value)}
-          className="px-4 py-2 bg-white border border-gray-300 rounded-lg dark:bg-gray-800 dark:border-gray-600 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-        >
-          <option value="">All Nodes</option>
-          {nodes.map((node: ProxmoxNode) => (
-            <option key={node.node} value={node.node}>
-              {node.node}
-            </option>
-          ))}
-        </select>
-
-        {/* Search */}
-        <div className="relative flex-1 max-w-md">
-          <Search className="absolute w-4 h-4 text-gray-400 transform -translate-y-1/2 left-3 top-1/2" />
-          <input
-            type="text"
-            placeholder="Search containers..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full py-2 pl-10 pr-4 bg-white border border-gray-300 rounded-lg dark:bg-gray-800 dark:border-gray-600 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-          />
-        </div>
-        
-        {/* Status Filter */}
-        <div className="flex items-center space-x-2">
-          <Filter className="w-4 h-4 text-gray-400" />
-          <select
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value as any)}
-            className="px-3 py-2 bg-white border border-gray-300 rounded-lg dark:bg-gray-800 dark:border-gray-600 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-          >
-            <option value="all">All Status</option>
-            <option value="running">Running</option>
-            <option value="stopped">Stopped</option>
-            <option value="suspended">Suspended</option>
-          </select>
-        </div>
-      </div>
-
-      {/* Container Grid */}
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2 xl:grid-cols-3">
-        {filteredContainers.map((container: ClusterResource) => {
-          const ctKey = `${container.node}-${container.vmid}`;
-          const currentAction = actionLoading[ctKey];
-          
-          return (
-            <div key={`${container.node}-${container.vmid}`} className="card">
-              {/* Header */}
-              <div className="flex items-center justify-between mb-4">
-                <div className="flex items-center space-x-3">
-                  <div className="p-2 bg-green-100 rounded-lg dark:bg-green-900">
-                    <Database className="w-6 h-6 text-green-600 dark:text-green-400" />
-                  </div>
-                  <div>
-                    <h3 className="font-semibold text-gray-900 dark:text-white">
-                      CT {container.vmid}
-                    </h3>
-                    <p className="text-sm text-gray-500 dark:text-gray-400">
-                      Node: {container.node}
-                    </p>
-                  </div>
-                </div>
-                
-                <span className={`inline-flex items-center space-x-1 px-2 py-1 text-xs font-medium rounded-full ${getStatusColor(container.status)}`}>
-                  {getStatusIcon(container.status)}
-                  <span>{container.status}</span>
-                </span>
-              </div>
-
-              {/* Resource Info */}
-              <div className="grid grid-cols-2 gap-4 mb-4">
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="text-gray-500 dark:text-gray-400">CPU:</span>
-                    <span className="font-medium text-gray-900 dark:text-white">
-                      {container.maxcpu || 'N/A'}
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="text-gray-500 dark:text-gray-400">Memory:</span>
-                    <span className="font-medium text-gray-900 dark:text-white">
-                      {container.maxmem ? formatBytes(container.maxmem) : 'N/A'}
-                    </span>
-                  </div>
-                </div>
-                
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="text-gray-500 dark:text-gray-400">Disk:</span>
-                    <span className="font-medium text-gray-900 dark:text-white">
-                      {container.maxdisk ? formatBytes(container.maxdisk) : 'N/A'}
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="text-gray-500 dark:text-gray-400">Usage:</span>
-                    <span className="font-medium text-gray-900 dark:text-white">
-                      {container.cpu ? `${(container.cpu * 100).toFixed(1)}%` : '0%'}
-                    </span>
-                  </div>
+        {/* Connection Status */}
+        {isConnected && (
+          <div className="p-4 mb-6 border border-green-200 rounded-lg bg-green-50 dark:bg-green-900/20 dark:border-green-800">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center space-x-3">
+                <Wifi className="w-5 h-5 text-green-600 dark:text-green-400" />
+                <div>
+                  <p className="font-medium text-green-800 dark:text-green-300">
+                    Connected to {config.host}:{config.port}
+                  </p>
+                  <p className="text-sm text-green-600 dark:text-green-400">
+                    {config.username}@{config.realm}
+                  </p>
                 </div>
               </div>
+              <button
+                onClick={disconnect}
+                className="btn-danger"
+              >
+                Disconnect
+              </button>
+            </div>
+          </div>
+        )}
 
-              {/* Current Status Details */}
-              {container.status === 'running' && (
-                <div className="p-3 mb-4 rounded-lg bg-green-50 dark:bg-green-900/20">
-                  <div className="grid grid-cols-2 gap-2 text-xs">
-                    <div className="flex items-center justify-between">
-                      <span className="text-green-700 dark:text-green-400">CPU:</span>
-                      <span className="font-medium text-green-800 dark:text-green-300">
-                        {container.cpu ? `${(container.cpu * 100).toFixed(1)}%` : '0%'}
-                      </span>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <span className="text-green-700 dark:text-green-400">Memory:</span>
-                      <span className="font-medium text-green-800 dark:text-green-300">
-                        {container.mem && container.maxmem ? `${((container.mem / container.maxmem) * 100).toFixed(1)}%` : '0%'}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-              )}
+        {/* Connection Form */}
+        <div className="card">
+          <div className="flex items-center mb-6">
+            <Server className="w-6 h-6 mr-3 text-blue-600 dark:text-blue-400" />
+            <h2 className="text-xl font-semibold text-gray-900 dark:text-white">
+              {isConnected ? 'Connection Settings' : 'Connect to Proxmox VE'}
+            </h2>
+          </div>
 
-              {/* Action Buttons */}
-              <div className="space-y-2">
-                {/* Primary Actions */}
-                <div className="flex space-x-2">
-                  {container.status === 'running' ? (
-                    <button
-                      onClick={() => handleContainerAction('stop', container.vmid!, container.node!)}
-                      disabled={!!currentAction}
-                      className="flex items-center flex-1 space-x-1 btn-danger"
-                    >
-                      {currentAction === 'stop' ? (
-                        <div className="w-4 h-4 border-2 border-white rounded-full border-t-transparent animate-spin" />
-                      ) : (
-                        <Square className="w-4 h-4" />
-                      )}
-                      <span>Stop</span>
-                    </button>
-                  ) : (
-                    <button
-                      onClick={() => handleContainerAction('start', container.vmid!, container.node!)}
-                      disabled={!!currentAction}
-                      className="flex items-center flex-1 space-x-1 btn-success"
-                    >
-                      {currentAction === 'start' ? (
-                        <div className="w-4 h-4 border-2 border-white rounded-full border-t-transparent animate-spin" />
-                      ) : (
-                        <Play className="w-4 h-4" />
-                      )}
-                      <span>Start</span>
-                    </button>
-                  )}
-                  
-                  <button className="p-2 btn-secondary">
-                    <Settings className="w-4 h-4" />
-                  </button>
-                </div>
+          <div className="space-y-6">
+            {/* Host and Port */}
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+              <div className="md:col-span-2">
+                <label className="block mb-2 text-sm font-medium text-gray-700 dark:text-gray-300">
+                  Host/IP Address
+                </label>
+                <input
+                  type="text"
+                  value={config.host}
+                  onChange={(e) => handleInputChange('host', e.target.value)}
+                  className="input-field"
+                  placeholder="192.168.1.100 or proxmox.example.com"
+                  disabled={isConnected}
+                />
+              </div>
+              <div>
+                <label className="block mb-2 text-sm font-medium text-gray-700 dark:text-gray-300">
+                  Port
+                </label>
+                <input
+                  type="number"
+                  value={config.port}
+                  onChange={(e) => handleInputChange('port', parseInt(e.target.value) || 8006)}
+                  className="input-field"
+                  min="1"
+                  max="65535"
+                  disabled={isConnected}
+                />
               </div>
             </div>
-          );
-        })}
-      </div>
 
-      {/* Empty State */}
-      {filteredContainers.length === 0 && !loading && (
-        <div className="flex flex-col items-center justify-center py-16 text-center">
-          <Database className="w-16 h-16 mx-auto mb-4 text-gray-400" />
-          <h3 className="mb-2 text-lg font-semibold text-gray-900 dark:text-white">
-            {containers.length === 0 ? 'No Containers' : 'No containers match your filters'}
-          </h3>
-          <p className="text-gray-500 dark:text-gray-400">
-            {containers.length === 0 
-              ? (selectedNode ? `No containers found on node ${selectedNode}` : 'No containers found in cluster')
-              : 'Try adjusting your search or filter criteria'
-            }
-          </p>
+            {/* Username and Realm */}
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              <div>
+                <label className="block mb-2 text-sm font-medium text-gray-700 dark:text-gray-300">
+                  Username
+                </label>
+                <input
+                  type="text"
+                  value={config.username}
+                  onChange={(e) => handleInputChange('username', e.target.value)}
+                  className="input-field"
+                  placeholder="root"
+                  disabled={isConnected}
+                />
+              </div>
+              <div>
+                <label className="block mb-2 text-sm font-medium text-gray-700 dark:text-gray-300">
+                  Realm
+                </label>
+                <select
+                  value={config.realm}
+                  onChange={(e) => handleInputChange('realm', e.target.value)}
+                  className="select-field"
+                  disabled={isConnected}
+                >
+                  <option value="pam">Linux PAM</option>
+                  <option value="pve">Proxmox VE</option>
+                  <option value="ad">Active Directory</option>
+                </select>
+              </div>
+            </div>
+
+            {/* Password */}
+            <div>
+              <label className="block mb-2 text-sm font-medium text-gray-700 dark:text-gray-300">
+                Password
+              </label>
+              <div className="relative">
+                <input
+                  type={showPassword ? 'text' : 'password'}
+                  value={config.password}
+                  onChange={(e) => handleInputChange('password', e.target.value)}
+                  className="pr-10 input-field"
+                  placeholder="Enter password"
+                  disabled={isConnected}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute inset-y-0 right-0 flex items-center pr-3"
+                  disabled={isConnected}
+                >
+                  {showPassword ? (
+                    <EyeOff className="w-4 h-4 text-gray-400" />
+                  ) : (
+                    <Eye className="w-4 h-4 text-gray-400" />
+                  )}
+                </button>
+              </div>
+            </div>
+
+            {/* SSL Option */}
+            <div className="flex items-center">
+              <input
+                type="checkbox"
+                id="ignoreSSL"
+                checked={config.ignoreSSL}
+                onChange={(e) => handleInputChange('ignoreSSL', e.target.checked)}
+                className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                disabled={isConnected}
+              />
+              <label htmlFor="ignoreSSL" className="block ml-2 text-sm text-gray-700 dark:text-gray-300">
+                Ignore SSL certificate errors (recommended for self-signed certificates)
+              </label>
+            </div>
+
+            {/* Test Result */}
+            {testResult && (
+              <div className={`p-4 rounded-lg ${
+                testResult.success 
+                  ? 'bg-green-50 border border-green-200 dark:bg-green-900/20 dark:border-green-800' 
+                  : 'bg-red-50 border border-red-200 dark:bg-red-900/20 dark:border-red-800'
+              }`}>
+                <div className="flex items-center">
+                  {testResult.success ? (
+                    <CheckCircle2 className="w-5 h-5 mr-2 text-green-600 dark:text-green-400" />
+                  ) : (
+                    <AlertCircle className="w-5 h-5 mr-2 text-red-600 dark:text-red-400" />
+                  )}
+                  <span className={
+                    testResult.success 
+                      ? 'text-green-800 dark:text-green-300' 
+                      : 'text-red-800 dark:text-red-300'
+                  }>
+                    {testResult.message}
+                  </span>
+                </div>
+              </div>
+            )}
+
+            {/* Action Buttons */}
+            {!isConnected && (
+              <div className="flex space-x-3">
+                <button
+                  onClick={testConnection}
+                  disabled={testing || !config.host || !config.username || !config.password}
+                  className="flex items-center space-x-2 btn-secondary"
+                >
+                  {testing ? (
+                    <div className="w-4 h-4 border-2 border-gray-600 rounded-full border-t-transparent animate-spin" />
+                  ) : (
+                    <TestTube className="w-4 h-4" />
+                  )}
+                  <span>Test Connection</span>
+                </button>
+                
+                <button
+                  onClick={saveAndConnect}
+                  disabled={connecting || !config.host || !config.username || !config.password}
+                  className="flex items-center flex-1 space-x-2 btn-primary"
+                >
+                  {connecting ? (
+                    <div className="w-4 h-4 border-2 border-white rounded-full border-t-transparent animate-spin" />
+                  ) : (
+                    <Save className="w-4 h-4" />
+                  )}
+                  <span>Connect</span>
+                </button>
+              </div>
+            )}
+          </div>
         </div>
-      )}
+
+        {/* Help Information */}
+        <div className="mt-8 card">
+          <h3 className="mb-4 text-lg font-medium text-gray-900 dark:text-white">
+            Connection Help
+          </h3>
+          <div className="space-y-3 text-sm text-gray-600 dark:text-gray-400">
+            <div className="flex items-start space-x-2">
+              <span className="font-medium text-blue-600 dark:text-blue-400">•</span>
+              <p>Enter your Proxmox VE server's IP address or hostname</p>
+            </div>
+            <div className="flex items-start space-x-2">
+              <span className="font-medium text-blue-600 dark:text-blue-400">•</span>
+              <p>Default port is 8006 (HTTPS web interface)</p>
+            </div>
+            <div className="flex items-start space-x-2">
+              <span className="font-medium text-blue-600 dark:text-blue-400">•</span>
+              <p>Use your Proxmox VE username and password</p>
+            </div>
+            <div className="flex items-start space-x-2">
+              <span className="font-medium text-blue-600 dark:text-blue-400">•</span>
+              <p>Enable "Ignore SSL errors" for self-signed certificates</p>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   );
 };
 
-export default ContainerManager;
+export default ConnectionManager;
