@@ -1,15 +1,62 @@
-/* File: src/renderer/styles/globals.css */
+/* src/renderer/styles/globals.css */
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 @layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 222.2 84% 4.9%;
+    --card: 0 0% 100%;
+    --card-foreground: 222.2 84% 4.9%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 222.2 84% 4.9%;
+    --primary: 221.2 83.2% 53.3%;
+    --primary-foreground: 210 40% 98%;
+    --secondary: 210 40% 96%;
+    --secondary-foreground: 222.2 84% 4.9%;
+    --muted: 210 40% 96%;
+    --muted-foreground: 215.4 16.3% 46.9%;
+    --accent: 210 40% 96%;
+    --accent-foreground: 222.2 84% 4.9%;
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 210 40% 98%;
+    --border: 214.3 31.8% 91.4%;
+    --input: 214.3 31.8% 91.4%;
+    --ring: 221.2 83.2% 53.3%;
+    --radius: 0.5rem;
+  }
+ 
+  .dark {
+    --background: 222.2 84% 4.9%;
+    --foreground: 210 40% 98%;
+    --card: 222.2 84% 4.9%;
+    --card-foreground: 210 40% 98%;
+    --popover: 222.2 84% 4.9%;
+    --popover-foreground: 210 40% 98%;
+    --primary: 217.2 91.2% 59.8%;
+    --primary-foreground: 222.2 84% 4.9%;
+    --secondary: 217.2 32.6% 17.5%;
+    --secondary-foreground: 210 40% 98%;
+    --muted: 217.2 32.6% 17.5%;
+    --muted-foreground: 215 20.2% 65.1%;
+    --accent: 217.2 32.6% 17.5%;
+    --accent-foreground: 210 40% 98%;
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 210 40% 98%;
+    --border: 217.2 32.6% 17.5%;
+    --input: 217.2 32.6% 17.5%;
+    --ring: 224.3 76.3% 94.1%;
+  }
+}
+
+@layer base {
   * {
-    @apply border-gray-200 dark:border-gray-700;
+    @apply border-border;
   }
   
   body {
-    @apply text-gray-900 bg-gray-50 dark:bg-gray-900 dark:text-gray-100;
+    @apply font-sans antialiased bg-background text-foreground;
   }
 
   html.dark {
@@ -18,96 +65,7 @@
 }
 
 @layer components {
+  /* Button Components */
   .btn-primary {
-    @apply px-4 py-2 font-medium text-white transition-colors bg-blue-600 rounded-md hover:bg-blue-700 dark:bg-blue-700 dark:hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed;
-  }
-  
-  .btn-secondary {
-    @apply px-4 py-2 font-medium text-gray-700 transition-colors bg-gray-200 rounded-md hover:bg-gray-300 dark:bg-gray-700 dark:hover:bg-gray-600 dark:text-gray-300 disabled:opacity-50 disabled:cursor-not-allowed;
-  }
-  
-  .btn-danger {
-    @apply px-4 py-2 font-medium text-white transition-colors bg-red-600 rounded-md hover:bg-red-700 dark:bg-red-700 dark:hover:bg-red-600 disabled:opacity-50 disabled:cursor-not-allowed;
-  }
-  
-  .btn-success {
-    @apply px-4 py-2 font-medium text-white transition-colors bg-green-600 rounded-md hover:bg-green-700 dark:bg-green-700 dark:hover:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed;
-  }
-  
-  .card {
-    @apply p-6 bg-white border border-gray-200 rounded-lg shadow-sm dark:bg-gray-800 dark:border-gray-700;
-  }
-  
-  .status-running {
-    @apply px-2 py-1 text-xs font-medium text-green-800 bg-green-100 rounded-full dark:bg-green-900/20 dark:text-green-400;
-  }
-  
-  .status-stopped {
-    @apply px-2 py-1 text-xs font-medium text-red-800 bg-red-100 rounded-full dark:bg-red-900/20 dark:text-red-400;
-  }
-  
-  .status-unknown {
-    @apply px-2 py-1 text-xs font-medium text-gray-800 bg-gray-100 rounded-full dark:bg-gray-700 dark:text-gray-300;
-  }
-
-  /* Input and form elements dark mode */
-  input, select, textarea {
-    @apply dark:bg-gray-800 dark:border-gray-600 dark:text-white dark:placeholder-gray-400;
-  }
-
-  input:focus, select:focus, textarea:focus {
-    @apply dark:ring-blue-400 dark:border-blue-400;
-  }
-
-  /* Table styles for dark mode */
-  table {
-    @apply dark:bg-gray-800;
-  }
-
-  thead {
-    @apply dark:bg-gray-700;
-  }
-
-  tbody tr {
-    @apply dark:bg-gray-800 dark:border-gray-700;
-  }
-
-  th {
-    @apply dark:text-gray-300;
-  }
-
-  td {
-    @apply dark:text-gray-400;
-  }
-
-  /* Modal and overlay dark mode */
-  .modal-overlay {
-    @apply dark:bg-gray-900 dark:bg-opacity-75;
-  }
-
-  .modal-content {
-    @apply dark:bg-gray-800 dark:border-gray-700;
-  }
-
-  /* Custom scrollbar for dark mode */
-  ::-webkit-scrollbar {
-    @apply w-2;
-  }
-
-  ::-webkit-scrollbar-track {
-    @apply bg-gray-100 dark:bg-gray-800;
-  }
-
-  ::-webkit-scrollbar-thumb {
-    @apply bg-gray-300 rounded-full dark:bg-gray-600;
-  }
-
-  ::-webkit-scrollbar-thumb:hover {
-    @apply bg-gray-400 dark:bg-gray-500;
-  }
-
-  /* Animation for dark mode transition */
-  * {
-    @apply transition-colors duration-200 ease-in-out;
-  }
-}
+    @apply inline-flex items-center justify-center rounded-md text-sm font-medium transition-colors 
+           focus

@@ -1,18 +1,19 @@
+// src/renderer/App.tsx
 import React, { useState, useEffect } from 'react';
 import { 
-  Server, 
   Monitor, 
   HardDrive, 
   Network, 
   Archive, 
   Settings,
-  Box,
   Database,
   Layers,
   Users,
   Disc,
   Moon,
-  Sun
+  Sun,
+  Activity,
+  Server
 } from 'lucide-react';
 import { ThemeProvider, useTheme } from './contexts/ThemeContext';
 import Dashboard from './components/Dashboard';
@@ -64,7 +65,6 @@ interface ConnectionConfig {
   ignoreSSL: boolean;
 }
 
-// Define the connection state type to match Settings component expectations
 interface ConnectionState {
   connected: boolean;
   config: ConnectionConfig | null;
@@ -76,8 +76,6 @@ const AppContent: React.FC = () => {
   const [currentInstance, setCurrentInstance] = useState<ProxmoxInstance | null>(null);
   const [showVMHardware, setShowVMHardware] = useState<VMHardwareState | null>(null);
   const [showVMConsole, setShowVMConsole] = useState<VMConsoleState | null>(null);
-
-  // Create a connection state that matches Settings component expectations
   const [connectionState, setConnectionState] = useState<ConnectionState>({
     connected: false,
     config: null
@@ -110,7 +108,6 @@ const AppContent: React.FC = () => {
       }
     }
 
-    // Fix the useEffect cleanup function
     const removeListener = window.electronAPI.onMenuConnect(() => {
       setActiveTab('instances');
     });
@@ -122,7 +119,6 @@ const AppContent: React.FC = () => {
     };
   }, []);
 
-  // Update connection state when current instance changes
   useEffect(() => {
     if (currentInstance && currentInstance.connected) {
       setConnectionState({
@@ -146,15 +142,15 @@ const AppContent: React.FC = () => {
 
   const tabs = [
     { id: 'instances', label: 'Instances', icon: Layers },
-    { id: 'dashboard', label: 'Dashboard', icon: Monitor, requiresConnection: true },
+    { id: 'dashboard', label: 'Dashboard', icon: Activity, requiresConnection: true },
     { id: 'nodes', label: 'Nodes', icon: Server, requiresConnection: true },
-    { id: 'vms', label: 'Virtual Machines', icon: Box, requiresConnection: true },
+    { id: 'vms', label: 'Virtual Machines', icon: Monitor, requiresConnection: true },
     { id: 'containers', label: 'Containers', icon: Database, requiresConnection: true },
     { id: 'storage', label: 'Storage', icon: HardDrive, requiresConnection: true },
     { id: 'network', label: 'Network', icon: Network, requiresConnection: true },
     { id: 'backups', label: 'Backups', icon: Archive, requiresConnection: true },
     { id: 'iso', label: 'ISO Images', icon: Disc, requiresConnection: true },
-    { id: 'users', label: 'User Management', icon: Users, requiresConnection: true },
+    { id: 'users', label: 'Users', icon: Users, requiresConnection: true },
     { id: 'settings', label: 'Settings', icon: Settings },
   ];
 
@@ -169,21 +165,23 @@ const AppContent: React.FC = () => {
   const renderContent = () => {
     if (activeTab !== 'instances' && activeTab !== 'settings' && !currentInstance?.connected) {
       return (
-        <div className="flex items-center justify-center h-full">
+        <div className="flex items-center justify-center min-h-screen bg-gray-50 dark:bg-gray-950">
           <div className="text-center">
-            <Layers className="w-16 h-16 mx-auto mb-4 text-gray-400 dark:text-gray-500" />
-            <h2 className="mb-2 text-xl font-semibold text-gray-700 dark:text-gray-300">
-              No Active Connection
-            </h2>
-            <p className="mb-4 text-gray-500 dark:text-gray-400">
-              Please connect to a Proxmox instance to continue
-            </p>
-            <button
-              onClick={() => setActiveTab('instances')}
-              className="btn-primary"
-            >
-              Manage Instances
-            </button>
+            <div className="p-8 bg-white border border-gray-200 rounded-lg shadow-sm dark:bg-gray-900 dark:border-gray-800">
+              <Layers className="w-16 h-16 mx-auto mb-4 text-gray-400 dark:text-gray-500" />
+              <h2 className="mb-2 text-xl font-semibold text-gray-900 dark:text-white">
+                No Active Connection
+              </h2>
+              <p className="mb-6 text-gray-600 dark:text-gray-400">
+                Connect to a Proxmox instance to access cluster management features
+              </p>
+              <button
+                onClick={() => setActiveTab('instances')}
+                className="px-4 py-2 text-white bg-blue-600 rounded-md hover:bg-blue-700"
+              >
+                Manage Instances
+              </button>
+            </div>
           </div>
         </div>
       );
@@ -233,65 +231,83 @@ const AppContent: React.FC = () => {
   };
 
   return (
-    <div className="flex h-screen bg-gray-100 dark:bg-gray-900">
+    <div className="flex h-screen bg-gray-50 dark:bg-gray-950">
       {/* Sidebar */}
-      <div className="w-64 bg-white shadow-lg dark:bg-gray-800">
-        <div className="p-4 border-b dark:border-gray-700">
-          <div className="flex items-center justify-between mb-2">
-            <h1 className="text-xl font-bold text-gray-800 dark:text-white">Proxmox VE Manager</h1>
+      <div className="w-64 bg-white border-r border-gray-200 shadow-sm dark:bg-gray-900 dark:border-gray-800">
+        {/* Header */}
+        <div className="p-6 border-b border-gray-200 dark:border-gray-800">
+          <div className="flex items-center justify-between mb-4">
+            <h1 className="text-lg font-bold text-gray-900 dark:text-white">
+              ProxTop
+            </h1>
             <button
               onClick={toggleDarkMode}
-              className="p-2 transition-colors rounded-md hover:bg-gray-100 dark:hover:bg-gray-700"
+              className="p-2 text-gray-500 transition-colors rounded-md hover:bg-gray-100 dark:hover:bg-gray-800 dark:text-gray-400"
               title={isDarkMode ? 'Switch to light mode' : 'Switch to dark mode'}
             >
               {isDarkMode ? (
-                <Sun className="w-5 h-5 text-yellow-500" />
+                <Sun className="w-5 h-5" />
               ) : (
-                <Moon className="w-5 h-5 text-gray-600" />
+                <Moon className="w-5 h-5" />
               )}
             </button>
           </div>
+          
+          {/* Connection Status */}
           {currentInstance?.connected && (
-            <div className="mt-1">
-              <p className="text-sm font-medium text-green-600 dark:text-green-400">{currentInstance.name}</p>
-              <p className="text-xs text-gray-500 dark:text-gray-400">{currentInstance.host}:{currentInstance.port}</p>
+            <div className="p-3 border border-green-200 rounded-md bg-green-50 dark:bg-green-900/20 dark:border-green-800">
+              <div className="flex items-center space-x-2">
+                <div className="w-2 h-2 bg-green-500 rounded-full"></div>
+                <div>
+                  <p className="text-sm font-medium text-green-800 dark:text-green-400">
+                    {currentInstance.name}
+                  </p>
+                  <p className="text-xs text-green-600 dark:text-green-500">
+                    {currentInstance.host}:{currentInstance.port}
+                  </p>
+                </div>
+              </div>
             </div>
           )}
         </div>
-        <nav className="mt-4">
-          {tabs.map((tab) => {
-            const Icon = tab.icon;
-            const isDisabled = tab.requiresConnection && !currentInstance?.connected;
-            
-            return (
-              <button
-                key={tab.id}
-                onClick={() => !isDisabled && setActiveTab(tab.id as TabType)}
-                disabled={isDisabled}
-                className={`w-full flex items-center px-4 py-3 text-left transition-colors ${
-                  isDisabled 
-                    ? 'text-gray-400 dark:text-gray-600 cursor-not-allowed' 
-                    : 'hover:bg-gray-50 dark:hover:bg-gray-700'
-                } ${
-                  activeTab === tab.id 
-                    ? 'bg-blue-50 dark:bg-blue-900/20 border-r-2 border-blue-600 text-blue-700 dark:text-blue-400' 
-                    : 'text-gray-700 dark:text-gray-300'
-                }`}
-              >
-                <Icon className="w-5 h-5 mr-3" />
-                {tab.label}
-              </button>
-            );
-          })}
+
+        {/* Navigation */}
+        <nav className="p-3">
+          <div className="space-y-1">
+            {tabs.map((tab) => {
+              const Icon = tab.icon;
+              const isDisabled = tab.requiresConnection && !currentInstance?.connected;
+              
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => !isDisabled && setActiveTab(tab.id as TabType)}
+                  disabled={isDisabled}
+                  className={`w-full flex items-center px-3 py-2.5 text-sm font-medium rounded-md transition-colors ${
+                    isDisabled 
+                      ? 'text-gray-400 dark:text-gray-600 cursor-not-allowed' 
+                      : 'hover:bg-gray-50 dark:hover:bg-gray-800'
+                  } ${
+                    activeTab === tab.id 
+                      ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400 border-r-2 border-blue-600' 
+                      : 'text-gray-700 dark:text-gray-300'
+                  }`}
+                >
+                  <Icon className="flex-shrink-0 w-5 h-5 mr-3" />
+                  <span className="truncate">{tab.label}</span>
+                </button>
+              );
+            })}
+          </div>
         </nav>
       </div>
 
       {/* Main Content */}
-      <div className="flex-1 overflow-hidden bg-gray-50 dark:bg-gray-900">
+      <div className="flex-1 overflow-hidden">
         {renderContent()}
       </div>
 
-      {/* VM Hardware Configuration Modal */}
+      {/* Modals */}
       {showVMHardware && (
         <VMHardwareManager
           vmId={showVMHardware.vmId}
@@ -300,7 +316,6 @@ const AppContent: React.FC = () => {
         />
       )}
 
-      {/* VM Console Modal */}
       {showVMConsole && (
         <NoVNCConsole
           vmId={showVMConsole.vmId}
