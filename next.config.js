@@ -1,12 +1,14 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  trailingSlash: true,
+  // REMOVE STATIC EXPORT - USE DYNAMIC RENDERING
+  trailingSlash: false,
   images: {
     unoptimized: true
   },
-  assetPrefix: './',
-  output: 'export',
-  distDir: 'out',
+  // Remove static export settings
+  // assetPrefix: './',
+  // output: 'export',
+  // distDir: 'out',
   swcMinify: false,
   experimental: {
     esmExternals: false
@@ -41,13 +43,6 @@ const nextConfig = {
     });
 
     return config;
-  },
-
-  // Ensure static export works
-  exportPathMap: async function (defaultPathMap) {
-    return {
-      '/': { page: '/' },
-    };
   },
 
   // Development configuration

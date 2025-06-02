@@ -6,17 +6,18 @@
   "homepage": "./",
   "scripts": {
     "setup-pages": "node -e \"const fs=require('fs');const path=require('path');const pagesDir='pages';if(!fs.existsSync(pagesDir))fs.mkdirSync(pagesDir,{recursive:true});console.log('Pages directory ready');\"",
-    "clean": "rimraf dist out .next",
+    "clean": "rimraf dist .next out",
     "build:main": "tsc -p tsconfig.main.json",
     "build:renderer": "next build",
     "build": "npm run setup-pages && npm run build:main && npm run build:renderer",
     "dev:main": "tsc -p tsconfig.main.json --watch",
     "dev:renderer": "next dev -p 3000",
     "dev": "npm run setup-pages && concurrently \"npm run dev:main\" \"npm run dev:renderer\" \"wait-on dist/main/main.js && electron . --disable-gpu\"",
-    "start": "npm run build && electron . --disable-gpu --disable-hardware-acceleration --no-sandbox",
-    "start:safe": "npm run build && electron . --disable-gpu --disable-hardware-acceleration --disable-software-rasterizer --no-sandbox --disable-features=VizDisplayCompositor --disable-web-security",
-    "start:minimal": "npm run build && electron . --disable-gpu --disable-hardware-acceleration --disable-software-rasterizer --no-sandbox --single-process",
-    "start:debug": "npm run build && electron . --disable-gpu --disable-hardware-acceleration --no-sandbox --enable-logging --inspect=9229",
+    "start": "npm run build:main && concurrently \"npm run dev:renderer\" \"wait-on dist/main/main.js && electron . --disable-gpu --no-sandbox\"",
+    "start:safe": "npm run build:main && concurrently \"npm run dev:renderer\" \"wait-on dist/main/main.js && electron . --disable-gpu --disable-hardware-acceleration --disable-software-rasterizer --no-sandbox --disable-features=VizDisplayCompositor --disable-web-security\"",
+    "start:ultra": "npm run build:main && concurrently \"npm run dev:renderer\" \"wait-on dist/main/main.js && electron . --no-sandbox --disable-gpu --disable-gpu-sandbox --disable-software-rasterizer --disable-hardware-acceleration --use-gl=disabled\"",
+    "start:minimal": "npm run build:main && concurrently \"npm run dev:renderer\" \"wait-on dist/main/main.js && electron . --no-sandbox --single-process\"",
+    "start:debug": "npm run build:main && concurrently \"npm run dev:renderer\" \"wait-on dist/main/main.js && electron . --disable-gpu --disable-hardware-acceleration --no-sandbox --enable-logging --inspect=9229\"",
     "electron": "electron .",
     "electron:dev": "wait-on dist/main/main.js && electron . --disable-gpu",
     "dist": "npm run build && electron-builder",
@@ -60,13 +61,13 @@
     },
     "files": [
       "dist/**/*",
-      "out/**/*",
+      ".next/**/*",
       "package.json"
     ],
     "extraResources": [
       {
-        "from": "out",
-        "to": "out"
+        "from": ".next",
+        "to": ".next"
       }
     ],
     "mac": {

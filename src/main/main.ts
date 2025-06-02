@@ -1,4 +1,4 @@
-// src/main/main.ts - Fixed main process with better error handling
+// EMERGENCY FIX - main.ts with alternative port handling
 import { app, BrowserWindow, ipcMain, Menu } from 'electron';
 import * as path from 'path';
 import { ProxmoxAPI } from './api/proxmox';
@@ -8,6 +8,8 @@ app.commandLine.appendSwitch('--disable-gpu');
 app.commandLine.appendSwitch('--disable-gpu-sandbox');
 app.commandLine.appendSwitch('--disable-software-rasterizer');
 app.commandLine.appendSwitch('--no-sandbox');
+app.commandLine.appendSwitch('--use-gl=disabled');
+app.commandLine.appendSwitch('--disable-d3d11');
 app.disableHardwareAcceleration();
 
 class ProxmoxDesktopApp {
@@ -54,26 +56,18 @@ class ProxmoxDesktopApp {
         nodeIntegration: false,
         contextIsolation: true,
         preload: path.join(__dirname, 'preload.js'),
-        webSecurity: false, // For development
+        webSecurity: false,
       },
       show: false,
     });
 
-    // Load the app
-    const isDev = process.env.NODE_ENV === 'development';
-    
-    if (isDev) {
-      this.mainWindow.loadURL('http://localhost:3000').catch(() => {
-        this.loadBuiltFiles();
-      });
-      this.mainWindow.webContents.openDevTools();
-    } else {
-      this.loadBuiltFiles();
-    }
+    // TRY MULTIPLE PORTS
+    this.tryLoadNextJS();
 
     this.mainWindow.once('ready-to-show', () => {
       if (!this.isQuitting && this.mainWindow && !this.mainWindow.isDestroyed()) {
         this.mainWindow.show();
+        console.log('ProxTop window shown successfully!');
       }
     });
 
@@ -84,56 +78,120 @@ class ProxmoxDesktopApp {
     this.createMenu();
   }
 
-  private loadBuiltFiles(): void {
-    const builtPath = path.join(__dirname, '../../out/index.html');
-    this.mainWindow?.loadFile(builtPath).catch(err => {
-      console.error('Failed to load built files:', err);
-      
-      const errorHtml = `
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <title>ProxTop - Error</title>
-            <style>
-                body { 
-                    font-family: Arial, sans-serif; 
-                    text-align: center; 
-                    padding: 50px;
-                    background: #f5f5f5;
-                    color: #333;
-                }
-                .error-container {
-                    background: white;
-                    border-radius: 8px;
-                    padding: 40px;
-                    box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-                    max-width: 500px;
-                    margin: 0 auto;
-                }
-                .error-title { color: #d32f2f; margin-bottom: 20px; }
-                .retry-button {
-                    background: #1976d2;
-                    color: white;
-                    border: none;
-                    padding: 12px 24px;
-                    border-radius: 4px;
-                    cursor: pointer;
-                    font-size: 16px;
-                }
-            </style>
-        </head>
-        <body>
-            <div class="error-container">
-                <h1 class="error-title">ProxTop Failed to Load</h1>
-                <p>The application failed to load properly. Please check the build.</p>
-                <button class="retry-button" onclick="location.reload()">Retry</button>
-            </div>
-        </body>
-        </html>
-      `;
-      
-      this.mainWindow?.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(errorHtml)}`);
-    });
+  private async tryLoadNextJS(): Promise<void> {
+    const ports = [3000, 3001, 3002, 3003];
+    
+    for (const port of ports) {
+      try {
+        console.log(`Trying to load from port ${port}...`);
+        await this.mainWindow?.loadURL(`http://localhost:${port}`);
+        console.log(`Successfully loaded from port ${port}!`);
+        return;
+      } catch (error) {
+        console.log(`Port ${port} failed, trying next...`);
+        continue;
+      }
+    }
+    
+    // If all ports fail, show error page
+    this.showErrorPage('No Next.js server found on ports 3000-3003. Make sure Next.js is running!');
+  }
+
+  private showErrorPage(message: string): void {
+    const errorHtml = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+          <title>ProxTop - Error</title>
+          <meta charset="UTF-8">
+          <style>
+              * { margin: 0; padding: 0; box-sizing: border-box; }
+              body { 
+                  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+                  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                  color: white;
+                  min-height: 100vh;
+                  display: flex;
+                  align-items: center;
+                  justify-content: center;
+              }
+              .container {
+                  background: rgba(255,255,255,0.1);
+                  backdrop-filter: blur(10px);
+                  border-radius: 20px;
+                  padding: 40px;
+                  text-align: center;
+                  max-width: 500px;
+                  border: 1px solid rgba(255,255,255,0.2);
+              }
+              h1 { font-size: 2.5em; margin-bottom: 20px; color: #ff6b6b; }
+              p { font-size: 1.1em; margin-bottom: 30px; line-height: 1.6; }
+              .buttons { display: flex; gap: 15px; justify-content: center; flex-wrap: wrap; }
+              button {
+                  background: #4ecdc4;
+                  color: white;
+                  border: none;
+                  padding: 12px 24px;
+                  border-radius: 25px;
+                  cursor: pointer;
+                  font-size: 1em;
+                  font-weight: 600;
+                  transition: all 0.3s ease;
+              }
+              button:hover { background: #45b7aa; transform: translateY(-2px); }
+              .debug { 
+                  background: rgba(0,0,0,0.3); 
+                  border-radius: 10px; 
+                  padding: 20px; 
+                  margin-top: 20px; 
+                  text-align: left; 
+                  font-family: monospace; 
+              }
+              .status { color: #4ecdc4; margin-bottom: 10px; }
+          </style>
+      </head>
+      <body>
+          <div class="container">
+              <h1>🚀 ProxTop Loading...</h1>
+              <p>${message}</p>
+              
+              <div class="debug">
+                  <div class="status">🔍 Debug Information:</div>
+                  <div>• Expected: Next.js dev server</div>
+                  <div>• Ports checked: 3000, 3001, 3002, 3003</div>
+                  <div>• Time: ${new Date().toLocaleTimeString()}</div>
+              </div>
+              
+              <div class="buttons">
+                  <button onclick="location.reload()">🔄 Retry</button>
+                  <button onclick="window.electronAPI?.quit?.() || window.close()">❌ Quit</button>
+              </div>
+              
+              <p style="margin-top: 20px; font-size: 0.9em; opacity: 0.8;">
+                Start Next.js manually: <strong>npm run dev:renderer</strong>
+              </p>
+          </div>
+          
+          <script>
+              // Auto-retry every 5 seconds
+              let retryCount = 0;
+              const maxRetries = 12; // 1 minute total
+              
+              function autoRetry() {
+                  if (retryCount < maxRetries) {
+                      retryCount++;
+                      console.log(\`Auto-retry \${retryCount}/\${maxRetries}\`);
+                      setTimeout(() => location.reload(), 5000);
+                  }
+              }
+              
+              autoRetry();
+          </script>
+      </body>
+      </html>
+    `;
+    
+    this.mainWindow?.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(errorHtml)}`);
   }
 
   private createMenu(): void {
