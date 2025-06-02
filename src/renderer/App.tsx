@@ -1,5 +1,5 @@
-// src/renderer/App.tsx - Improved with better connection handling
-import React, { useState, useEffect } from 'react';
+// src/renderer/App.tsx - KORRIGIERT OHNE TYPESCRIPT-FEHLER
+import React, { useState, useEffect, useCallback } from 'react';
 import { 
   Activity, 
   Monitor, 
@@ -8,21 +8,18 @@ import {
   Archive, 
   Settings,
   Database,
-  Layers,
+  Server,
+  Menu,
+  X,
+  BarChart3,
   Users,
   Disc,
   Moon,
   Sun,
-  Server,
-  Menu,
-  X,
-  Home,
-  BarChart3,
-  Shield,
-  Cloud,
-  AlertTriangle,
   Wifi,
-  WifiOff
+  WifiOff,
+  AlertTriangle,
+  RefreshCw
 } from 'lucide-react';
 import { ThemeProvider, useTheme } from './contexts/ThemeContext';
 import { useProxmox } from './hooks/useProxmox';
@@ -63,6 +60,11 @@ interface ConnectionConfig {
   ignoreSSL: boolean;
 }
 
+interface ConnectionState {
+  connected: boolean;
+  config: ConnectionConfig | null;
+}
+
 const AppContent: React.FC = () => {
   const { isDarkMode, toggleDarkMode } = useTheme();
   const [activeTab, setActiveTab] = useState<TabType>('connection');
@@ -83,58 +85,17 @@ const AppContent: React.FC = () => {
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const [errors, setErrors] = useState<string[]>([]);
   
-  // Simple error management
-  const addError = (error: string) => {
-    setErrors(prev => [error, ...prev.slice(0, 4)]); // Keep last 5 errors
-  };
+  // Error management
+  const addError = useCallback((error: string) => {
+    setErrors(prev => [error, ...prev.slice(0, 4)]);
+  }, []);
   
-  const clearErrors = () => {
+  const clearErrors = useCallback(() => {
     setErrors([]);
-  };
-
-  // Handle initial connection check
-  useEffect(() => {
-    const savedConfig = localStorage.getItem('proxmox-connection-config');
-    if (savedConfig) {
-      try {
-        const config = JSON.parse(savedConfig);
-        setCurrentConfig(config);
-      } catch (error) {
-        console.error('Failed to parse saved config:', error);
-      }
-    }
   }, []);
 
-  // Update active tab based on connection state
-  useEffect(() => {
-    if (isConnected && activeTab === 'connection') {
-      setActiveTab('dashboard');
-    } else if (!isConnected && activeTab !== 'connection' && activeTab !== 'settings') {
-      setActiveTab('connection');
-    }
-  }, [isConnected, activeTab]);
-
-  // Handle connection change from ConnectionManager
-  const handleConnectionChange = async (connected: boolean, config?: ConnectionConfig) => {
-    setIsConnected(connected);
-    if (connected && config) {
-      setCurrentConfig(config);
-      setConnectionError(null);
-      // Fetch initial data
-      try {
-        await Promise.all([fetchNodes(), fetchClusterResources()]);
-      } catch (error) {
-        console.error('Failed to fetch initial data:', error);
-        addError('Failed to fetch initial data');
-      }
-    } else {
-      setCurrentConfig(null);
-      setConnectionError(null);
-    }
-  };
-
-  // Simple connect function for ConnectionManager
-  const connect = async (config: ConnectionConfig) => {
+  // Connection management
+  const connect = useCallback(async (config: ConnectionConfig) => {
     setIsConnecting(true);
     setConnectionError(null);
     
@@ -144,6 +105,17 @@ const AppContent: React.FC = () => {
       if (result.success) {
         setIsConnected(true);
         setCurrentConfig(config);
+        // Save config to localStorage
+        localStorage.setItem('proxmox-connection-config', JSON.stringify(config));
+        
+        // Fetch initial data
+        try {
+          await Promise.all([fetchNodes(), fetchClusterResources()]);
+        } catch (error) {
+          console.error('Failed to fetch initial data:', error);
+          addError('Failed to fetch initial data after connection');
+        }
+        
         return { success: true };
       } else {
         setConnectionError(result.error || 'Connection failed');
@@ -158,10 +130,9 @@ const AppContent: React.FC = () => {
     } finally {
       setIsConnecting(false);
     }
-  };
+  }, [fetchNodes, fetchClusterResources, addError]);
 
-  // Simple disconnect function
-  const disconnect = async () => {
+  const disconnect = useCallback(async () => {
     try {
       await window.electronAPI.disconnect();
     } catch (error) {
@@ -171,8 +142,60 @@ const AppContent: React.FC = () => {
       setIsConnecting(false);
       setConnectionError(null);
       setCurrentConfig(null);
+      localStorage.removeItem('proxmox-connection-config');
     }
-  };
+  }, []);
+
+  // Handle connection change from ConnectionManager
+  const handleConnectionChange = useCallback(async (connected: boolean, config?: ConnectionConfig) => {
+    if (connected && config) {
+      const result = await connect(config);
+      if (result.success) {
+        setActiveTab('dashboard');
+      }
+    } else {
+      await disconnect();
+      setActiveTab('connection');
+    }
+  }, [connect, disconnect]);
+
+  // Connection state management for Settings
+  const handleConnectionStateChange = useCallback((newState: ConnectionState) => {
+    if (newState.connected && newState.config) {
+      connect(newState.config);
+    } else {
+      disconnect();
+    }
+  }, [connect, disconnect]);
+
+  // Load saved configuration on startup
+  useEffect(() => {
+    const savedConfig = localStorage.getItem('proxmox-connection-config');
+    if (savedConfig) {
+      try {
+        const config = JSON.parse(savedConfig);
+        setCurrentConfig(config);
+        // Auto-connect with saved config
+        connect(config).then(result => {
+          if (result.success) {
+            setActiveTab('dashboard');
+          }
+        });
+      } catch (error) {
+        console.error('Failed to parse saved config:', error);
+        localStorage.removeItem('proxmox-connection-config');
+      }
+    }
+  }, [connect]);
+
+  // Update active tab based on connection state
+  useEffect(() => {
+    if (isConnected && activeTab === 'connection') {
+      setActiveTab('dashboard');
+    } else if (!isConnected && activeTab !== 'connection' && activeTab !== 'settings') {
+      setActiveTab('connection');
+    }
+  }, [isConnected, activeTab]);
 
   const navigationSections: NavigationSection[] = [
     {
@@ -306,7 +329,12 @@ const AppContent: React.FC = () => {
       case 'users':
         return <UserManager />;
       case 'settings':
-        return <SettingsComponent connection={{ connected: isConnected, config: currentConfig }} setConnection={() => {}} />;
+        return (
+          <SettingsComponent 
+            connection={{ connected: isConnected, config: currentConfig }} 
+            setConnection={handleConnectionStateChange} 
+          />
+        );
       default:
         return <ConnectionManager onConnectionChange={handleConnectionChange} />;
     }
@@ -472,7 +500,6 @@ const AppContent: React.FC = () => {
                         </div>
                       )}
                       
-                      {/* Tooltip for collapsed sidebar */}
                       {sidebarCollapsed && (
                         <div className="absolute z-50 px-2 py-1 ml-2 text-xs font-medium text-white transition-opacity duration-200 bg-gray-900 rounded shadow-lg opacity-0 pointer-events-none left-full group-hover:opacity-100 whitespace-nowrap">
                           {item.label}
@@ -505,6 +532,14 @@ const AppContent: React.FC = () => {
 
       {/* Main Content Area */}
       <div className="flex-1 overflow-hidden">
+        {loading && (
+          <div className="absolute inset-0 z-10 flex items-center justify-center bg-white bg-opacity-75 dark:bg-gray-900 dark:bg-opacity-75">
+            <div className="text-center">
+              <RefreshCw className="w-8 h-8 mx-auto mb-2 text-blue-600 animate-spin" />
+              <p className="text-sm text-gray-600 dark:text-gray-400">Loading...</p>
+            </div>
+          </div>
+        )}
         {renderContent()}
       </div>
     </div>
